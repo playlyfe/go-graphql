@@ -128,7 +128,7 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 					"name":         inputValueDefinition.Name.Value,
 					"description":  inputValueDefinition.Description,
 					"type":         introspectType(schema, inputValueDefinition.Type),
-					"defaultValue": BuildValue(inputValueDefinition.DefaultValue),
+					"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
 				})
 			}
 			typeInfo["inputFields"] = inputFields
@@ -314,7 +314,7 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
 							"type":         inputValueDefinition.Type,
-							"defaultValue": BuildValue(inputValueDefinition.DefaultValue),
+							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
 						})
 					}
 					fields = append(fields, map[string]interface{}{
@@ -341,7 +341,7 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
 							"type":         inputValueDefinition.Type,
-							"defaultValue": BuildValue(inputValueDefinition.DefaultValue),
+							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
 						})
 					}
 					fields = append(fields, map[string]interface{}{

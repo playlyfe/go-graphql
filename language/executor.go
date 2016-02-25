@@ -40,7 +40,7 @@ type Executor struct {
 	ErrorHandler func(err *Error) map[string]interface{}
 }
 
-func BuildValue(node ASTNode) interface{} {
+func BuildValue(node ASTNode, variables map[string]interface{}) interface{} {
 	switch value := node.(type) {
 	case *Int:
 		return value.Value
@@ -55,15 +55,21 @@ func BuildValue(node ASTNode) interface{} {
 	case *Object:
 		result := map[string]interface{}{}
 		for _, field := range value.Fields {
-			result[field.Name.Value] = BuildValue(field.Value)
+			result[field.Name.Value] = BuildValue(field.Value, variables)
 		}
 		return result
 	case *List:
 		result := []interface{}{}
 		for _, item := range value.Values {
-			result = append(result, BuildValue(item))
+			result = append(result, BuildValue(item, variables))
 		}
 		return result
+	case *Variable:
+		if val, ok := variables[value.Name.Value]; ok {
+			return val
+		} else {
+			return nil
+		}
 	default:
 		return nil
 	}
@@ -159,6 +165,13 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 		// if includeDirective's if argument is false then continue
 		switch selection := item.(type) {
 		case *Field:
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
+				continue
+			}
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
+				continue
+			}
+
 			var responseKey string
 			var groupForResponseKey []*Field
 			var ok bool
@@ -175,6 +188,13 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			groupedFields[responseKey] = append(groupForResponseKey, selection)
 			log.Printf("adding selection '%s' to grouped fields of '%s'", selection.Name.Value, responseKey)
 		case *FragmentSpread:
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
+				continue
+			}
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
+				continue
+			}
+
 			var fragmentSpreadName string
 			fragmentSpreadName = selection.Name.Value
 			if visitedFragments.Has(fragmentSpreadName) {
@@ -202,6 +222,13 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 				groupedFields[responseKey] = append(groupForResponseKey, fragmentGroup...)
 			}
 		case *InlineFragment:
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
+				continue
+			}
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
+				continue
+			}
+
 			if selection.TypeCondition != nil && !executor.doesFragmentTypeApply(objectType, selection.TypeCondition) {
 				continue
 			}
@@ -485,10 +512,10 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDefinition, arguments []*Argument, variables map[string]interface{}) map[string]interface{} {
 	result := map[string]interface{}{}
 	for _, argument := range arguments {
-		value := BuildValue(argument.Value)
+		value := BuildValue(argument.Value, variables)
 		defaultValue := argumentIndex[argument.Name.Value].DefaultValue
 		if value == nil && defaultValue != nil {
-			value = BuildValue(defaultValue)
+			value = BuildValue(defaultValue, variables)
 		}
 		if value != nil {
 			result[argument.Name.Value] = value
@@ -496,7 +523,7 @@ func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDef
 	}
 	for _, argumentDefinition := range argumentIndex {
 		if _, ok := result[argumentDefinition.Name.Value]; !ok && argumentDefinition.DefaultValue != nil {
-			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue)
+			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue, variables)
 			if defaultValue != nil {
 				result[argumentDefinition.Name.Value] = defaultValue
 			}

@@ -34,9 +34,9 @@ type OperationDefinition struct {
 	Name                *Name
 	VariableDefinitions []*VariableDefinition
 	Directives          []*Directive
+	DirectiveIndex      map[string]*Directive
 	SelectionSet        *SelectionSet
-	//DirectiveIndex      map[string]map[string]interface{}
-	LOC *LOC
+	LOC                 *LOC
 }
 
 type SelectionSet struct {
@@ -57,33 +57,38 @@ type Variable struct {
 }
 
 type Field struct {
-	Alias        *Name
-	Name         *Name
-	Arguments    []*Argument
-	Directives   []*Directive
-	SelectionSet *SelectionSet
-	LOC          *LOC
+	Alias          *Name
+	Name           *Name
+	Arguments      []*Argument
+	ArgumentIndex  map[string]*Argument
+	Directives     []*Directive
+	DirectiveIndex map[string]*Directive
+	SelectionSet   *SelectionSet
+	LOC            *LOC
 }
 
 type InlineFragment struct {
-	TypeCondition *NamedType
-	Directives    []*Directive
-	SelectionSet  *SelectionSet
-	LOC           *LOC
+	TypeCondition  *NamedType
+	Directives     []*Directive
+	DirectiveIndex map[string]*Directive
+	SelectionSet   *SelectionSet
+	LOC            *LOC
 }
 
 type FragmentSpread struct {
-	Name       *Name
-	Directives []*Directive
-	LOC        *LOC
+	Name           *Name
+	Directives     []*Directive
+	DirectiveIndex map[string]*Directive
+	LOC            *LOC
 }
 
 type FragmentDefinition struct {
-	Name          *Name
-	TypeCondition *NamedType
-	Directives    []*Directive
-	SelectionSet  *SelectionSet
-	LOC           *LOC
+	Name           *Name
+	TypeCondition  *NamedType
+	Directives     []*Directive
+	DirectiveIndex map[string]*Directive
+	SelectionSet   *SelectionSet
+	LOC            *LOC
 }
 
 type Literal struct {
@@ -129,9 +134,10 @@ type NamedType struct {
 }
 
 type Directive struct {
-	Name      *Name
-	Arguments []*Argument
-	LOC       *LOC
+	Name          *Name
+	Arguments     []*Argument
+	ArgumentIndex map[string]*Argument
+	LOC           *LOC
 }
 
 type Argument struct {

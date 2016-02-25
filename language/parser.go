@@ -257,7 +257,7 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 			}
 		}
 		if parser.lookahead.Type == AT {
-			node.Directives, err = parser.directives()
+			node.Directives, node.DirectiveIndex, err = parser.directives()
 			if err != nil {
 				return nil, err
 			}
@@ -428,13 +428,13 @@ func (parser *Parser) field() (*Field, error) {
 		node.Name = nameOrAlias
 	}
 	if parser.lookahead.Type == LPAREN {
-		node.Arguments, err = parser.arguments()
+		node.Arguments, node.ArgumentIndex, err = parser.arguments()
 		if err != nil {
 			return nil, err
 		}
 	}
 	if parser.lookahead.Type == AT {
-		node.Directives, err = parser.directives()
+		node.Directives, node.DirectiveIndex, err = parser.directives()
 		if err != nil {
 			return nil, err
 		}
@@ -452,27 +452,29 @@ func (parser *Parser) field() (*Field, error) {
 /**
  * Arguments : ( Argument+ )
  */
-func (parser *Parser) arguments() ([]*Argument, error) {
+func (parser *Parser) arguments() ([]*Argument, map[string]*Argument, error) {
 	err := parser.match(LPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	arguments := []*Argument{}
+	argumentIndex := map[string]*Argument{}
 	for {
 		argument, err := parser.argument()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		arguments = append(arguments, argument)
+		argumentIndex[argument.Name.Value] = argument
 		if parser.lookahead.Type == RPAREN {
 			break
 		}
 	}
 	err = parser.match(RPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return arguments, nil
+	return arguments, argumentIndex, nil
 }
 
 /**
@@ -518,7 +520,7 @@ func (parser *Parser) fragment() (ASTNode, error) {
 			return nil, err
 		}
 		if parser.lookahead.Type == AT {
-			node.Directives, err = parser.directives()
+			node.Directives, node.DirectiveIndex, err = parser.directives()
 			if err != nil {
 				return nil, err
 			}
@@ -538,7 +540,7 @@ func (parser *Parser) fragment() (ASTNode, error) {
 		}
 	}
 	if parser.lookahead.Type == AT {
-		node.Directives, err = parser.directives()
+		node.Directives, node.DirectiveIndex, err = parser.directives()
 		if err != nil {
 			return nil, err
 		}
@@ -579,7 +581,7 @@ func (parser *Parser) fragmentDefinition() (*FragmentDefinition, error) {
 		return nil, err
 	}
 	if parser.lookahead.Type == AT {
-		node.Directives, err = parser.directives()
+		node.Directives, node.DirectiveIndex, err = parser.directives()
 		if err != nil {
 			return nil, err
 		}
@@ -797,19 +799,22 @@ func (parser *Parser) objectField(isConstant bool) (*ObjectField, error) {
 /**
  * Directives : Directive+
  */
-func (parser *Parser) directives() ([]*Directive, error) {
+func (parser *Parser) directives() ([]*Directive, map[string]*Directive, error) {
 	directives := []*Directive{}
+	directiveIndex := map[string]*Directive{}
+
 	for {
 		directive, err := parser.directive()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		directives = append(directives, directive)
+		directiveIndex[directive.Name.Value] = directive
 		if parser.lookahead.Type != AT {
 			break
 		}
 	}
-	return directives, nil
+	return directives, directiveIndex, nil
 }
 
 /**
@@ -826,7 +831,7 @@ func (parser *Parser) directive() (*Directive, error) {
 	if err != nil {
 		return nil, err
 	}
-	node.Arguments, err = parser.arguments()
+	node.Arguments, node.ArgumentIndex, err = parser.arguments()
 	if err != nil {
 		return nil, err
 	}
@@ -1002,12 +1007,11 @@ func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 	node := &FieldDefinition{}
 	start := parser.lookahead.Start
 	node.Name, err = parser.name()
-	node.ArgumentIndex = map[string]*InputValueDefinition{}
 	if err != nil {
 		return nil, err
 	}
 	if parser.lookahead.Type == LPAREN {
-		node.Arguments, err = parser.argumentDefs(node)
+		node.Arguments, node.ArgumentIndex, err = parser.argumentDefs(node)
 		if err != nil {
 			return nil, err
 		}
@@ -1027,29 +1031,30 @@ func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 /**
  * ArgumentsDefinition : ( InputValueDefinition+ )
  */
-func (parser *Parser) argumentDefs(node *FieldDefinition) ([]*InputValueDefinition, error) {
+func (parser *Parser) argumentDefs(node *FieldDefinition) ([]*InputValueDefinition, map[string]*InputValueDefinition, error) {
 	var err error
 	err = parser.match(LPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	arguments := []*InputValueDefinition{}
+	argumentIndex := map[string]*InputValueDefinition{}
 	for {
 		argument, err := parser.inputValueDef()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		arguments = append(arguments, argument)
-		node.ArgumentIndex[argument.Name.Value] = argument
+		argumentIndex[argument.Name.Value] = argument
 		if parser.lookahead.Type == RPAREN {
 			break
 		}
 	}
 	err = parser.match(RPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return arguments, nil
+	return arguments, argumentIndex, nil
 }
 
 /**
