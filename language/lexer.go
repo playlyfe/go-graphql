@@ -49,19 +49,6 @@ const (
 	BOOL   // true, false
 	NULL   // null
 
-	// Keywords
-	QUERY
-	MUTATION
-	FRAGMENT
-	TYPE
-	INTERFACE
-	UNION
-	SCALAR
-	ENUM
-	INPUT
-	EXTEND
-	IMPLEMENTS
-	ON
 )
 
 func (tokenType TokenType) String() string {
@@ -79,31 +66,31 @@ func (tokenType TokenType) String() string {
 	case COMMENT:
 		return "Comment"
 	case BANG:
-		return "!"
+		return "Bang"
 	case DOLLAR:
-		return "$"
+		return "Dollar"
 	case LPAREN:
-		return "("
+		return "LeftParentheses"
 	case RPAREN:
-		return ")"
+		return "RightParantheses"
 	case SPREAD:
-		return "..."
+		return "Spread"
 	case LBRACK:
-		return "["
+		return "LeftBracket"
 	case RBRACK:
-		return "]"
+		return "RightBracket"
 	case COLON:
-		return ":"
+		return "Colon"
 	case EQ:
-		return "="
+		return "Equal"
 	case AT:
-		return "@"
+		return "At"
 	case LBRACE:
-		return "{"
+		return "LeftBrace"
 	case RBRACE:
-		return "}"
+		return "RightBrace"
 	case PIPE:
-		return "|"
+		return "Pipe"
 	case NAME:
 		return "Name"
 	case INT:
@@ -116,14 +103,6 @@ func (tokenType TokenType) String() string {
 		return "Boolean"
 	case NULL:
 		return "Null"
-	case QUERY:
-		return "Query"
-	case MUTATION:
-		return "Mutation"
-	case ON:
-		return "On"
-	case FRAGMENT:
-		return "Fragment"
 	default:
 		return "Unknown"
 	}
@@ -434,48 +413,6 @@ Loop:
 }
 
 func LexName(lexer *Lexer) StateFn {
-	// Check for keywords and special symbols
-	if lexer.AcceptString("true") || lexer.AcceptString("false") {
-		lexer.Emit(BOOL)
-		return LexText
-	} else if lexer.AcceptString("null") {
-		lexer.Emit(NULL)
-		return LexText
-	} else if lexer.AcceptString("query") {
-		lexer.Emit(QUERY)
-		return LexText
-	} else if lexer.AcceptString("mutation") {
-		lexer.Emit(MUTATION)
-		return LexText
-	} else if lexer.AcceptString("fragment") {
-		lexer.Emit(FRAGMENT)
-		return LexText
-	} else if lexer.AcceptString("type") {
-		lexer.Emit(TYPE)
-		return LexText
-	} else if lexer.AcceptString("interface") {
-		lexer.Emit(INTERFACE)
-		return LexText
-	} else if lexer.AcceptString("union") {
-		lexer.Emit(UNION)
-		return LexText
-	} else if lexer.AcceptString("scalar") {
-		lexer.Emit(SCALAR)
-		return LexText
-	} else if lexer.AcceptString("enum") {
-		lexer.Emit(ENUM)
-		return LexText
-	} else if lexer.AcceptString("input") {
-		lexer.Emit(INPUT)
-		return LexText
-	} else if lexer.AcceptString("extend") {
-		lexer.Emit(EXTEND)
-		return LexText
-	} else if lexer.AcceptString("implements") {
-		lexer.Emit(IMPLEMENTS)
-		return LexText
-	}
-
 	for IsAllowedInNamePrefix(lexer.Next()) {
 	}
 	lexer.Backup()

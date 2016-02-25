@@ -27,7 +27,7 @@ func (e *ParseException) Error() string {
 		for _, token := range e.ExpectedTokens {
 			tokens = append(tokens, token.String())
 		}
-		return fmt.Sprintf("[Line %d, Column %d] Invalid syntax detected, expected one of %s but found: '%s'", e.Token.Start.Line, e.Token.Start.Column, strings.Join(tokens, ", "), e.Token.Val)
+		return fmt.Sprintf("[Line %d, Column %d] %s: Expected one of %s but found: '%s' [%s]", e.Token.Start.Line, e.Token.Start.Column, e.Message, strings.Join(tokens, ", "), e.Token.Val, e.Token.Type.String())
 	} else {
 		return e.Message
 	}
@@ -52,7 +52,22 @@ func (parser *Parser) match(symbol TokenType) error {
 			Name:           "syntax_error",
 			Message:        "Invalid syntax",
 			Token:          parser.lookahead,
-			ExpectedTokens: []TokenType{parser.lookahead.Type},
+			ExpectedTokens: []TokenType{symbol},
+		}
+	}
+}
+
+func (parser *Parser) matchName(value string) error {
+	if parser.lookahead.Type == NAME && parser.lookahead.Val == value {
+		parser.prevEnd = parser.lookahead.End
+		token := <-parser.tokens
+		parser.lookahead = &token
+		return nil
+	} else {
+		return &ParseException{
+			Name:    "syntax_error",
+			Message: fmt.Sprintf("Expected '%s' but found '%s'", value, parser.lookahead.Val),
+			Token:   parser.lookahead,
 		}
 	}
 }
@@ -91,6 +106,11 @@ func (parser *Parser) document() (*Document, error) {
 	objectTypeIndex := map[string]*ObjectTypeDefinition{}
 	interfaceTypeIndex := map[string]*InterfaceTypeDefinition{}
 	unionTypeIndex := map[string]*UnionTypeDefinition{}
+	inputObjectTypeIndex := map[string]*InputObjectTypeDefinition{}
+	scalarTypeIndex := map[string]*ScalarTypeDefinition{}
+	enumTypeIndex := map[string]*EnumTypeDefinition{}
+	typeIndex := map[string]ASTNode{}
+	possibleTypesIndex := map[string][]*ObjectTypeDefinition{}
 	for {
 		definition, err := parser.definition()
 		if err != nil {
@@ -99,12 +119,34 @@ func (parser *Parser) document() (*Document, error) {
 		switch item := definition.(type) {
 		case *FragmentDefinition:
 			fragmentIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
 		case *ObjectTypeDefinition:
 			objectTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
+			if len(item.Interfaces) > 0 {
+				for _, implementedInterface := range item.Interfaces {
+					interfaceName := implementedInterface.Name.Value
+					if possibleTypesIndex[interfaceName] == nil {
+						possibleTypesIndex[interfaceName] = []*ObjectTypeDefinition{}
+					}
+					possibleTypesIndex[interfaceName] = append(possibleTypesIndex[interfaceName], item)
+				}
+			}
 		case *InterfaceTypeDefinition:
 			interfaceTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
 		case *UnionTypeDefinition:
 			unionTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
+		case *InputObjectTypeDefinition:
+			inputObjectTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
+		case *EnumTypeDefinition:
+			enumTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
+		case *ScalarTypeDefinition:
+			scalarTypeIndex[item.Name.Value] = item
+			typeIndex[item.Name.Value] = item
 		}
 		definitions = append(definitions, definition)
 		if parser.lookahead.Type == EOF {
@@ -112,13 +154,28 @@ func (parser *Parser) document() (*Document, error) {
 		}
 	}
 
+	// Find possible types for unions
+	for _, unionType := range unionTypeIndex {
+		unionName := unionType.Name.Value
+		if possibleTypesIndex[unionName] == nil {
+			possibleTypesIndex[unionName] = []*ObjectTypeDefinition{}
+		}
+		for _, possibleType := range unionType.Types {
+			possibleTypesIndex[unionName] = append(possibleTypesIndex[unionName], objectTypeIndex[possibleType.Name.Value])
+		}
+	}
+
 	return &Document{
-		Definitions:        definitions,
-		FragmentIndex:      fragmentIndex,
-		ObjectTypeIndex:    objectTypeIndex,
-		InterfaceTypeIndex: interfaceTypeIndex,
-		UnionTypeIndex:     unionTypeIndex,
-		LOC:                parser.loc(start),
+		Definitions:          definitions,
+		FragmentIndex:        fragmentIndex,
+		ObjectTypeIndex:      objectTypeIndex,
+		InterfaceTypeIndex:   interfaceTypeIndex,
+		UnionTypeIndex:       unionTypeIndex,
+		InputObjectTypeIndex: inputObjectTypeIndex,
+		EnumTypeIndex:        enumTypeIndex,
+		PossibleTypesIndex:   possibleTypesIndex,
+		TypeIndex:            typeIndex,
+		LOC:                  parser.loc(start),
 	}, nil
 }
 
@@ -131,20 +188,31 @@ func (parser *Parser) document() (*Document, error) {
  */
 func (parser *Parser) definition() (ASTNode, error) {
 	switch parser.lookahead.Type {
-	case FRAGMENT:
-		return parser.fragmentDefinition()
-	case LBRACE, MUTATION, QUERY:
+	case NAME:
+		switch parser.lookahead.Val {
+		case "fragment":
+			return parser.fragmentDefinition()
+		case "mutation", "query":
+			return parser.operationDefinition()
+		case "type", "interface", "union", "scalar", "enum", "input":
+			return parser.typeDefinition()
+		case "extend":
+			return parser.typeExtensionDefinition()
+		default:
+			return nil, &ParseException{
+				Name:    "syntax_error",
+				Message: fmt.Sprintf("Expected one of fragment, mutation, query, type, interface, union, scalar, enum or input, but found %s", parser.lookahead.Val),
+				Token:   parser.lookahead,
+			}
+		}
+	case LBRACE:
 		return parser.operationDefinition()
-	case TYPE, INTERFACE, UNION, SCALAR, ENUM, INPUT:
-		return parser.typeDefinition()
-	case EXTEND:
-		return parser.typeExtensionDefinition()
 	default:
 		return nil, &ParseException{
 			Name:           "syntax_error",
 			Message:        "Invalid syntax",
 			Token:          parser.lookahead,
-			ExpectedTokens: []TokenType{FRAGMENT, LBRACE, MUTATION, QUERY},
+			ExpectedTokens: []TokenType{NAME, LBRACE},
 		}
 	}
 }
@@ -169,10 +237,10 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 			SelectionSet: selectionSet,
 			LOC:          parser.loc(start),
 		}, nil
-	case MUTATION, QUERY:
+	case NAME:
 		node := &OperationDefinition{}
 		node.Operation = parser.lookahead.Val
-		err := parser.match(parser.lookahead.Type)
+		err := parser.matchName(parser.lookahead.Val)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +273,7 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 			Name:           "syntax_error",
 			Message:        "Invalid syntax",
 			Token:          parser.lookahead,
-			ExpectedTokens: []TokenType{LBRACE, MUTATION, QUERY},
+			ExpectedTokens: []TokenType{LBRACE, NAME},
 		}
 	}
 }
@@ -493,7 +561,7 @@ func (parser *Parser) fragment() (ASTNode, error) {
  */
 func (parser *Parser) fragmentDefinition() (*FragmentDefinition, error) {
 	start := parser.lookahead.Start
-	err := parser.match(FRAGMENT)
+	err := parser.matchName("fragment")
 	if err != nil {
 		return nil, err
 	}
@@ -502,22 +570,13 @@ func (parser *Parser) fragmentDefinition() (*FragmentDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
-	if parser.lookahead.Val == "on" {
-		err = parser.match(NAME)
-		if err != nil {
-			return nil, err
-		}
-		node.TypeCondition, err = parser.namedType()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		return nil, &ParseException{
-			Name:           "syntax_error",
-			Message:        "Invalid syntax",
-			Token:          parser.lookahead,
-			ExpectedTokens: []TokenType{ON},
-		}
+	err = parser.matchName("on")
+	if err != nil {
+		return nil, err
+	}
+	node.TypeCondition, err = parser.namedType()
+	if err != nil {
+		return nil, err
 	}
 	if parser.lookahead.Type == AT {
 		node.Directives, err = parser.directives()
@@ -606,21 +665,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 			return nil, err
 		}
 		return &String{
-			Value: token.Val,
-			LOC:   parser.loc(start),
-		}, nil
-	case BOOL:
-		token := parser.lookahead
-		err := parser.match(BOOL)
-		if err != nil {
-			return nil, err
-		}
-		val := false
-		if token.Val == "true" {
-			val = true
-		}
-		return &Boolean{
-			Value: val,
+			Value: token.Val[1 : len(token.Val)-1],
 			LOC:   parser.loc(start),
 		}, nil
 	case NAME:
@@ -629,10 +674,23 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Enum{
-			Value: token.Val,
-			LOC:   parser.loc(start),
-		}, nil
+		if token.Val == "true" {
+			return &Boolean{
+				Value: true,
+				LOC:   parser.loc(start),
+			}, nil
+		} else if token.Val == "false" {
+			return &Boolean{
+				Value: false,
+				LOC:   parser.loc(start),
+			}, nil
+		}
+		if token.Val != "null" {
+			return &Enum{
+				Value: token.Val,
+				LOC:   parser.loc(start),
+			}, nil
+		}
 	case DOLLAR:
 		if !isConstant {
 			return parser.variable()
@@ -642,7 +700,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		Name:           "syntax_error",
 		Message:        "Invalid syntax",
 		Token:          parser.lookahead,
-		ExpectedTokens: []TokenType{LBRACE, LBRACK, INT, FLOAT, STRING, BOOL, NAME},
+		ExpectedTokens: []TokenType{LBRACE, LBRACK, INT, FLOAT, STRING, NAME},
 	}
 
 }
@@ -796,6 +854,10 @@ func (parser *Parser) type_() (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
+		err = parser.match(RBRACK)
+		if err != nil {
+			return nil, err
+		}
 		list.LOC = parser.loc(start)
 		node = list
 	} else {
@@ -804,6 +866,7 @@ func (parser *Parser) type_() (ASTNode, error) {
 			return nil, err
 		}
 	}
+
 	if parser.lookahead.Type == BANG {
 		err = parser.match(BANG)
 		if err != nil {
@@ -842,25 +905,24 @@ func (parser *Parser) namedType() (*NamedType, error) {
  *   - InputObjectTypeDefinition
  */
 func (parser *Parser) typeDefinition() (ASTNode, error) {
-	switch parser.lookahead.Type {
-	case TYPE:
+	switch parser.lookahead.Val {
+	case "type":
 		return parser.objectTypeDefinition()
-	case INTERFACE:
+	case "interface":
 		return parser.interfaceTypeDefinition()
-	case UNION:
+	case "union":
 		return parser.unionTypeDefinition()
-	case SCALAR:
+	case "scalar":
 		return parser.scalarTypeDefinition()
-	case ENUM:
+	case "enum":
 		return parser.enumTypeDefinition()
-	case INPUT:
+	case "input":
 		return parser.inputObjectTypeDefinition()
 	default:
 		return nil, &ParseException{
-			Name:           "syntax_error",
-			Message:        "Invalid syntax",
-			Token:          parser.lookahead,
-			ExpectedTokens: []TokenType{TYPE, INTERFACE, UNION, SCALAR, ENUM, INPUT},
+			Name:    "syntax_error",
+			Message: fmt.Sprintf("Expected one of type, interface, union, scalar, enum, input, but found %s", parser.lookahead.Val),
+			Token:   parser.lookahead,
 		}
 	}
 }
@@ -872,7 +934,7 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
 	var err error
 	start := parser.lookahead.Start
 	node := &ObjectTypeDefinition{}
-	err = parser.match(TYPE)
+	err = parser.matchName("type")
 	if err != nil {
 		return nil, err
 	}
@@ -880,7 +942,7 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
-	if parser.lookahead.Type == IMPLEMENTS {
+	if parser.lookahead.Type == NAME && parser.lookahead.Val == "implements" {
 		node.Interfaces, err = parser.implementsInterfaces()
 		if err != nil {
 			return nil, err
@@ -892,17 +954,20 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
 		return nil, err
 	}
 	node.Fields = []*FieldDefinition{}
+	fieldIndex := map[string]*FieldDefinition{}
 	for parser.lookahead.Type != RBRACE {
 		field, err := parser.fieldDefinition()
 		if err != nil {
 			return nil, err
 		}
+		fieldIndex[field.Name.Value] = field
 		node.Fields = append(node.Fields, field)
 	}
 	err = parser.match(RBRACE)
 	if err != nil {
 		return nil, err
 	}
+	node.FieldIndex = fieldIndex
 	node.LOC = parser.loc(start)
 	return node, nil
 }
@@ -911,7 +976,7 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
  * ImplementsInterfaces : implements NamedType+
  */
 func (parser *Parser) implementsInterfaces() ([]*NamedType, error) {
-	err := parser.match(IMPLEMENTS)
+	err := parser.matchName("implements")
 	if err != nil {
 		return nil, err
 	}
@@ -937,11 +1002,12 @@ func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 	node := &FieldDefinition{}
 	start := parser.lookahead.Start
 	node.Name, err = parser.name()
+	node.ArgumentIndex = map[string]*InputValueDefinition{}
 	if err != nil {
 		return nil, err
 	}
 	if parser.lookahead.Type == LPAREN {
-		node.Arguments, err = parser.argumentDefs()
+		node.Arguments, err = parser.argumentDefs(node)
 		if err != nil {
 			return nil, err
 		}
@@ -961,7 +1027,7 @@ func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 /**
  * ArgumentsDefinition : ( InputValueDefinition+ )
  */
-func (parser *Parser) argumentDefs() ([]*InputValueDefinition, error) {
+func (parser *Parser) argumentDefs(node *FieldDefinition) ([]*InputValueDefinition, error) {
 	var err error
 	err = parser.match(LPAREN)
 	if err != nil {
@@ -974,6 +1040,7 @@ func (parser *Parser) argumentDefs() ([]*InputValueDefinition, error) {
 			return nil, err
 		}
 		arguments = append(arguments, argument)
+		node.ArgumentIndex[argument.Name.Value] = argument
 		if parser.lookahead.Type == RPAREN {
 			break
 		}
@@ -1025,7 +1092,7 @@ func (parser *Parser) interfaceTypeDefinition() (*InterfaceTypeDefinition, error
 	var err error
 	node := &InterfaceTypeDefinition{}
 	start := parser.lookahead.Start
-	err = parser.match(INTERFACE)
+	err = parser.matchName("interface")
 	if err != nil {
 		return nil, err
 	}
@@ -1061,7 +1128,7 @@ func (parser *Parser) unionTypeDefinition() (*UnionTypeDefinition, error) {
 	var err error
 	node := &UnionTypeDefinition{}
 	start := parser.lookahead.Start
-	err = parser.match(UNION)
+	err = parser.matchName("union")
 	if err != nil {
 		return nil, err
 	}
@@ -1112,7 +1179,7 @@ func (parser *Parser) unionMembers() ([]*NamedType, error) {
 func (parser *Parser) scalarTypeDefinition() (*ScalarTypeDefinition, error) {
 	node := &ScalarTypeDefinition{}
 	start := parser.lookahead.Start
-	err := parser.match(SCALAR)
+	err := parser.matchName("scalar")
 	if err != nil {
 		return nil, err
 	}
@@ -1130,7 +1197,7 @@ func (parser *Parser) scalarTypeDefinition() (*ScalarTypeDefinition, error) {
 func (parser *Parser) enumTypeDefinition() (*EnumTypeDefinition, error) {
 	node := &EnumTypeDefinition{}
 	start := parser.lookahead.Start
-	err := parser.match(ENUM)
+	err := parser.matchName("enum")
 	if err != nil {
 		return nil, err
 	}
@@ -1183,7 +1250,7 @@ func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
 func (parser *Parser) inputObjectTypeDefinition() (*InputObjectTypeDefinition, error) {
 	node := &InputObjectTypeDefinition{}
 	start := parser.lookahead.Start
-	err := parser.match(INPUT)
+	err := parser.matchName("input")
 	if err != nil {
 		return nil, err
 	}
@@ -1216,7 +1283,7 @@ func (parser *Parser) inputObjectTypeDefinition() (*InputObjectTypeDefinition, e
 func (parser *Parser) typeExtensionDefinition() (*TypeExtensionDefinition, error) {
 	node := &TypeExtensionDefinition{}
 	start := parser.lookahead.Start
-	err := parser.match(EXTEND)
+	err := parser.matchName("extend")
 	if err != nil {
 		return nil, err
 	}

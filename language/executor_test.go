@@ -13,12 +13,9 @@ func TestExecutor(t *testing.T) {
 		Convey("should be able to execute simple requests", func() {
 			schema := `
             type User {
-                name: String!
-                password: String
-            }
-
-            type Viewer {
-                user(id: String): User
+              id: String
+              name: String
+              birthday: Date
             }
 
             type QueryRoot {
@@ -33,18 +30,18 @@ func TestExecutor(t *testing.T) {
 			input := `
             # Fetch the user
             query name {
-                viewer {
-                    user(id: "asdasd") {
-                        ...F1
-                    }
-                }
-            }
-            fragment F1 on User {
+              __type(name: "User") {
                 name
-                password
+                fields {
+                  name
+                  type {
+                    name
+                  }
+                }
+              }
             }
             `
-			resolvers := map[string]*FieldParams{}
+			resolvers := map[string]interface{}{}
 			resolvers["QueryRoot/viewer"] = &FieldParams{
 				Resolve: func(params *ResolveParams) (interface{}, error) {
 					return map[string]interface{}{

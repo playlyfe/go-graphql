@@ -16,12 +16,17 @@ type LOC struct {
 
 // TODO: Optimize all indexes
 type Document struct {
-	Definitions        []ASTNode
-	FragmentIndex      map[string]*FragmentDefinition
-	ObjectTypeIndex    map[string]*ObjectTypeDefinition
-	InterfaceTypeIndex map[string]*InterfaceTypeDefinition
-	UnionTypeIndex     map[string]*UnionTypeDefinition
-	LOC                *LOC
+	Definitions          []ASTNode
+	FragmentIndex        map[string]*FragmentDefinition
+	ObjectTypeIndex      map[string]*ObjectTypeDefinition
+	InterfaceTypeIndex   map[string]*InterfaceTypeDefinition
+	UnionTypeIndex       map[string]*UnionTypeDefinition
+	InputObjectTypeIndex map[string]*InputObjectTypeDefinition
+	ScalarTypeIndex      map[string]*ScalarTypeDefinition
+	EnumTypeIndex        map[string]*EnumTypeDefinition
+	TypeIndex            map[string]ASTNode
+	PossibleTypesIndex   map[string][]*ObjectTypeDefinition
+	LOC                  *LOC
 }
 
 type OperationDefinition struct {
@@ -165,6 +170,7 @@ type ObjectTypeDefinition struct {
 	Description string
 	Interfaces  []*NamedType
 	Fields      []*FieldDefinition
+	FieldIndex  map[string]*FieldDefinition
 	LOC         *LOC
 }
 
@@ -174,6 +180,7 @@ type FieldDefinition struct {
 	IsDeprecated      bool
 	DeprecationReason string
 	Arguments         []*InputValueDefinition
+	ArgumentIndex     map[string]*InputValueDefinition
 	Type              ASTNode
 	LOC               *LOC
 }

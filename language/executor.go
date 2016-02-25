@@ -8,6 +8,7 @@ import (
 )
 
 type ResolveParams struct {
+	Schema     *Document
 	Context    interface{}
 	Source     interface{}
 	Args       map[string]interface{}
@@ -35,15 +36,48 @@ type FieldParams struct {
 type Executor struct {
 	ResolveType  func(value interface{}) string
 	Schema       *Schema
-	Resolvers    map[string]*FieldParams
+	Resolvers    map[string]interface{}
 	ErrorHandler func(err *Error) map[string]interface{}
 }
 
-func NewExecutor(schemaDefinition string, resolvers map[string]*FieldParams) (*Executor, error) {
-	schema, err := NewSchema(schemaDefinition)
+func BuildValue(node ASTNode) interface{} {
+	switch value := node.(type) {
+	case *Int:
+		return value.Value
+	case *Float:
+		return value.Value
+	case *String:
+		return value.Value
+	case *Boolean:
+		return value.Value
+	case *Enum:
+		return value.Value
+	case *Object:
+		result := map[string]interface{}{}
+		for _, field := range value.Fields {
+			result[field.Name.Value] = BuildValue(field.Value)
+		}
+		return result
+	case *List:
+		result := []interface{}{}
+		for _, item := range value.Values {
+			result = append(result, BuildValue(item))
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func NewExecutor(schemaDefinition string, resolvers map[string]interface{}) (*Executor, error) {
+	schema, schemaResolvers, err := NewSchema(schemaDefinition)
 	if err != nil {
 		return nil, err
 	}
+	for key, schemaResolver := range schemaResolvers {
+		resolvers[key] = schemaResolver
+	}
+
 	return &Executor{
 		Schema:    schema,
 		Resolvers: resolvers,
@@ -272,7 +306,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 	log.Printf("completing value on %#v", result)
 	if nonNullType, ok := fieldType.(*NonNullType); ok {
 		innerType := nonNullType.Type
-		completedResult, err := executor.completeValue(reqCtx, innerType, result, nil)
+		completedResult, err := executor.completeValue(reqCtx, innerType, result, subSelectionSet)
 		log.Printf("completed result of %#v is %#v", result, completedResult)
 		if err != nil {
 			return nil, err
@@ -300,7 +334,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 		completedResults := []interface{}{}
 		for index := 0; index < resultVal.Len(); index++ {
 			val := resultVal.Index(index).Interface()
-			completedItem, err := executor.completeValue(reqCtx, innerType, val, nil)
+			completedItem, err := executor.completeValue(reqCtx, innerType, val, subSelectionSet)
 			if err != nil {
 				return nil, err
 			}
@@ -337,15 +371,15 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 		} else {
 			return nil, nil
 		}
-	case "Enum":
-		val, ok := utils.CoerceEnum(result)
-		if ok {
-			return val, nil
-		} else {
-			return nil, nil
-		}
 	default:
-		log.Printf("completing %s on type %s", result, typeName)
+		if _, ok := executor.Schema.Document.EnumTypeIndex[typeName]; ok {
+			val, ok := utils.CoerceEnum(result)
+			if ok {
+				return val, nil
+			} else {
+				return nil, nil
+			}
+		}
 		if objectType, ok := executor.Schema.Document.ObjectTypeIndex[typeName]; ok {
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
@@ -418,13 +452,20 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 		}
 		return nil, nil
 	}
-
 	resolverName := objectType.Name.Value + "/" + firstField.Name.Value
 	if resolver, ok := executor.Resolvers[resolverName]; ok {
-		result, err := resolver.Resolve(&ResolveParams{
+		var resolveFn func(params *ResolveParams) (interface{}, error)
+		fieldParams, ok := resolver.(*FieldParams)
+		if ok {
+			resolveFn = fieldParams.Resolve
+		} else {
+			resolveFn = resolver.(func(params *ResolveParams) (interface{}, error))
+		}
+		result, err := resolveFn(&ResolveParams{
+			Schema:  executor.Schema.Document,
 			Context: reqCtx.AppContext,
 			Source:  object,
-			Args:    executor.buildArguments(firstField.Arguments, reqCtx.Variables),
+			Args:    executor.buildArguments(objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.Arguments, reqCtx.Variables),
 		})
 		if err != nil {
 			// TODO: Check how to proceed
@@ -441,11 +482,27 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 	return nil, nil
 }
 
-func (executor *Executor) buildArguments(arguments []*Argument, variables map[string]interface{}) map[string]interface{} {
+func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDefinition, arguments []*Argument, variables map[string]interface{}) map[string]interface{} {
 	result := map[string]interface{}{}
 	for _, argument := range arguments {
-		result[argument.Name] =
+		value := BuildValue(argument.Value)
+		defaultValue := argumentIndex[argument.Name.Value].DefaultValue
+		if value == nil && defaultValue != nil {
+			value = BuildValue(defaultValue)
+		}
+		if value != nil {
+			result[argument.Name.Value] = value
+		}
 	}
+	for _, argumentDefinition := range argumentIndex {
+		if _, ok := result[argumentDefinition.Name.Value]; !ok && argumentDefinition.DefaultValue != nil {
+			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue)
+			if defaultValue != nil {
+				result[argumentDefinition.Name.Value] = defaultValue
+			}
+		}
+	}
+	utils.PrintJSON(result)
 	return result
 }
 
