@@ -161,7 +161,9 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error) {
 	parser := &Parser{}
 	schema := &Schema{}
-	ast, err := parser.Parse(schemaDefinition + INTROSPECTION_SCHEMA)
+	ast, err := parser.Parse(&ParseParams{
+		Source: schemaDefinition + INTROSPECTION_SCHEMA,
+	})
 	if err != nil {
 		return nil, nil, err
 	}

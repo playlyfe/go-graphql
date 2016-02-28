@@ -2,7 +2,9 @@ package language
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -56,7 +58,7 @@ func (tokenType TokenType) String() string {
 	case ILLEGAL:
 		return "Illegal"
 	case EOF:
-		return "EndOfFile"
+		return "EOF"
 	case UNICODE_BOM:
 		return "UnicodeBOM"
 	case WHITE_SPACE:
@@ -66,31 +68,31 @@ func (tokenType TokenType) String() string {
 	case COMMENT:
 		return "Comment"
 	case BANG:
-		return "Bang"
+		return "!"
 	case DOLLAR:
-		return "Dollar"
+		return "$"
 	case LPAREN:
-		return "LeftParentheses"
+		return "("
 	case RPAREN:
-		return "RightParantheses"
+		return ")"
 	case SPREAD:
-		return "Spread"
+		return "..."
 	case LBRACK:
-		return "LeftBracket"
+		return "["
 	case RBRACK:
-		return "RightBracket"
+		return "]"
 	case COLON:
-		return "Colon"
+		return ":"
 	case EQ:
-		return "Equal"
+		return "="
 	case AT:
-		return "At"
+		return "@"
 	case LBRACE:
-		return "LeftBrace"
+		return "{"
 	case RBRACE:
-		return "RightBrace"
+		return "}"
 	case PIPE:
-		return "Pipe"
+		return "|"
 	case NAME:
 		return "Name"
 	case INT:
@@ -102,7 +104,7 @@ func (tokenType TokenType) String() string {
 	case BOOL:
 		return "Boolean"
 	case NULL:
-		return "Null"
+		return "null"
 	default:
 		return "Unknown"
 	}
@@ -118,14 +120,16 @@ type Token struct {
 func (token Token) String() string {
 	switch token.Type {
 	case EOF:
-		return "EndOfFile"
+		return "EOF"
 	case ILLEGAL:
 		return token.Val
+	case NAME:
+		return fmt.Sprintf("Name %q", token.Val)
 	}
 	if len(token.Val) > 10 {
-		return fmt.Sprintf("%.10q...", token.Val)
+		return fmt.Sprintf("%.10s...", token.Val)
 	}
-	return fmt.Sprintf("%q", token.Val)
+	return fmt.Sprintf("%s", token.Val)
 }
 
 type Lexer struct {
@@ -141,15 +145,29 @@ type Lexer struct {
 
 func (lexer *Lexer) Run() {
 	lexer.Line = 1
+	lexer.Column = 1
 	for state := lexer.InitialState; state != nil; {
 		state = state(lexer)
 	}
 	close(lexer.Tokens)
 }
 
+func (lexer *Lexer) runeToString(rn rune) string {
+	var character string
+	if unicode.IsControl(rn) {
+		character = fmt.Sprintf("%U", rn)[2:]
+		character = `\u` + character
+	} else if rn == -1 {
+		return "<EOF>"
+	} else {
+		character = string(rn)
+	}
+	return character
+}
+
 func (lexer *Lexer) Emit(tokenType TokenType) {
 	line := lexer.Line
-	column := lexer.Column - (lexer.Pos - lexer.Start) + 1
+	column := lexer.Column - utf8.RuneCountInString(lexer.Input[lexer.Start:lexer.Pos])
 	start := lexer.Start
 	end := lexer.Pos
 	startPos := &Position{
@@ -160,9 +178,18 @@ func (lexer *Lexer) Emit(tokenType TokenType) {
 	endPos := &Position{
 		Index:  end,
 		Line:   line,
-		Column: column + end - start - 1,
+		Column: column + end - start,
 	}
-	lexer.Tokens <- Token{tokenType, lexer.Input[lexer.Start:lexer.Pos], startPos, endPos}
+	var value string
+	var err error
+	value = lexer.Input[lexer.Start:lexer.Pos]
+	if tokenType == STRING {
+		value, err = strconv.Unquote(value)
+		if err != nil {
+			panic(err)
+		}
+	}
+	lexer.Tokens <- Token{tokenType, value, startPos, endPos}
 	lexer.Start = lexer.Pos
 	lexer.Width = 0
 }
@@ -170,11 +197,10 @@ func (lexer *Lexer) Emit(tokenType TokenType) {
 func (lexer *Lexer) Next() (rn rune) {
 	if lexer.Pos >= len(lexer.Input) {
 		lexer.Width = 0
-		lexer.Column -= 1
 		return -1
 	}
 	rn, lexer.Width = utf8.DecodeRuneInString(lexer.Input[lexer.Pos:])
-	lexer.Column += lexer.Width
+	lexer.Column += 1
 	lexer.Pos += lexer.Width
 	return rn
 }
@@ -184,7 +210,9 @@ func (lexer *Lexer) Ignore() {
 }
 
 func (lexer *Lexer) Backup() {
-	lexer.Column -= lexer.Width
+	if lexer.Width > 0 {
+		lexer.Column -= 1
+	}
 	lexer.Pos -= lexer.Width
 }
 
@@ -202,16 +230,19 @@ func (lexer *Lexer) Accept(valid string) bool {
 	return false
 }
 
-func (lexer *Lexer) AcceptRun(valid string) {
+func (lexer *Lexer) AcceptRun(valid string) int {
+	count := 0
 	for strings.IndexRune(valid, lexer.Next()) >= 0 {
+		count++
 	}
 	lexer.Backup()
+	return count
 }
 
 func (lexer *Lexer) AcceptString(valid string) bool {
 	if strings.HasPrefix(lexer.Input[lexer.Pos:], valid) {
 		lexer.Width = len(valid)
-		lexer.Column += lexer.Width
+		lexer.Column += utf8.RuneCountInString(valid)
 		lexer.Pos += lexer.Width
 		return true
 	}
@@ -220,7 +251,7 @@ func (lexer *Lexer) AcceptString(valid string) bool {
 
 func (lexer *Lexer) Errorf(format string, args ...interface{}) StateFn {
 	line := lexer.Line
-	column := lexer.Column - (lexer.Width) + 1
+	column := lexer.Column - utf8.RuneCountInString(lexer.Input[lexer.Start:lexer.Pos])
 	start := lexer.Start
 	end := lexer.Pos
 	startPos := &Position{
@@ -231,7 +262,7 @@ func (lexer *Lexer) Errorf(format string, args ...interface{}) StateFn {
 	endPos := &Position{
 		Index:  end,
 		Line:   line,
-		Column: column + end - start - 1,
+		Column: column + end - start,
 	}
 	lexer.Tokens <- Token{
 		ILLEGAL,
@@ -261,9 +292,6 @@ func IsWhiteSpace(rn rune) bool {
 func IsDigit(rn rune) bool {
 	return (rn >= '0' && rn <= '9')
 }
-func IsAlphabet(rn rune) bool {
-	return (rn >= 'a' && rn <= 'z') || (rn >= 'A' && rn <= 'Z')
-}
 func IsAllowedInNamePrefix(rn rune) bool {
 	return (rn >= 'a' && rn <= 'z') || (rn >= 'A' && rn <= 'Z') || rn == '_'
 }
@@ -282,9 +310,9 @@ func LexText(lexer *Lexer) StateFn {
 			if rn == '\u000D' && lexer.Peek() == '\u000A' {
 				lexer.Next()
 			}
-			lexer.Line += 1
-			lexer.Column = 0
 			lexer.Ignore()
+			lexer.Line += 1
+			lexer.Column = 1
 		case rn == ',':
 			lexer.Ignore()
 		case rn == '!':
@@ -318,11 +346,13 @@ func LexText(lexer *Lexer) StateFn {
 			lexer.Backup()
 			return LexQuote
 		case rn == '.':
-			lexer.Backup()
-			if lexer.AcceptString("...") {
+			if lexer.AcceptString("..") {
 				lexer.Emit(SPREAD)
+			} else {
+				return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid character "%s" found in document`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
 			}
-		case IsDigit(rn):
+
+		case IsDigit(rn), rn == '-':
 			lexer.Backup()
 			return LexNumber
 		case IsAllowedInNamePrefix(rn):
@@ -332,7 +362,7 @@ func LexText(lexer *Lexer) StateFn {
 			lexer.Emit(EOF)
 			return nil
 		default:
-			return lexer.Errorf("Unexpected character in input : '%v' ", rn)
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid character "%s" found in document`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
 		}
 	}
 	lexer.Emit(EOF)
@@ -343,21 +373,34 @@ func LexNumber(lexer *Lexer) StateFn {
 	lexer.Accept("+-")
 	numberType := INT
 	digits := "0123456789"
-	if lexer.Accept("0") && lexer.Accept("xX") {
-		digits = "0123456789abcdefABCDEF"
+	if lexer.Accept("0") {
+		if lexer.Accept(digits) {
+			lexer.Backup()
+			rn := lexer.Next()
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, unexpected digit after 0: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
+		}
 	}
 	lexer.AcceptRun(digits)
 	if lexer.Accept(".") {
-		lexer.AcceptRun(digits)
+		count := lexer.AcceptRun(digits)
+		if count == 0 {
+			rn := lexer.Next()
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, expected digit but got: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
+		}
 		numberType = FLOAT
 	}
 	if lexer.Accept("eE") {
 		lexer.Accept("+-")
-		lexer.AcceptRun("0123456789")
+		count := lexer.AcceptRun("0123456789")
+		if count == 0 {
+			rn := lexer.Next()
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, expected digit but got: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
+		}
+		numberType = FLOAT
 	}
 	if IsAllowedInNamePrefix(lexer.Peek()) {
-		lexer.Next()
-		return lexer.Errorf("Bad number syntax: %q", lexer.Input[lexer.Start:lexer.Pos])
+		rn := lexer.Next()
+		return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, expected digit but got: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
 	}
 	lexer.Emit(numberType)
 	return LexText
@@ -371,8 +414,7 @@ func LexComment(lexer *Lexer) StateFn {
 				lexer.Next()
 			}
 			lexer.Line += 1
-			lexer.Column = 0
-			lexer.Ignore()
+			lexer.Column = 1
 			return LexText
 		}
 	}
@@ -381,31 +423,48 @@ func LexComment(lexer *Lexer) StateFn {
 
 func LexQuote(lexer *Lexer) StateFn {
 	quote := lexer.Next()
+	index := 1
 Loop:
 	for {
-		switch lexer.Next() {
+		switch rn := lexer.Next(); rn {
 		case '\\':
-			if rn := lexer.Next(); rn != -1 && rn != '\u000A' {
+			if rn = lexer.Next(); rn != -1 && rn != '\u000A' {
 				if rn == 'u' {
-					len := 4
-					for {
-						lexer.Accept("0123456789abcdefABCDEF")
+					len := 0
+					for lexer.Accept("0123456789abcdefABCDEF") {
 						len++
 					}
 					if len != 4 {
-						return lexer.Errorf("Invalid unicode character")
+						lexer.Start = lexer.Pos - len - 2
+						return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid unicode character "\u%s" found in string`, lexer.Line, lexer.Column-1-len, lexer.Input[lexer.Pos-len:lexer.Pos])
 					}
 					break
 				} else if rn == '"' || rn == '\\' || rn == '/' || rn == 'b' || rn == 'f' || rn == 'n' || rn == 'r' || rn == 't' {
 					break
 				}
-				return lexer.Errorf("Invalid escape sequence")
+				lexer.Start = lexer.Pos - 2
+				return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid escape sequence "%s" found in string`, lexer.Line, lexer.Column-1, lexer.Input[lexer.Pos-2:lexer.Pos])
 			}
 			fallthrough
-		case -1, '\u000A':
-			return lexer.Errorf("Unterminated quoted string")
+		case -1:
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Closing quotation missing in string`, lexer.Line, lexer.Column)
+		case '\u000A', '\u000D':
+			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Closing quotation missing in string`, lexer.Line, lexer.Column-1)
 		case quote:
 			break Loop
+		default:
+			if rn < '\u0020' && rn != '\u0009' {
+				var character string
+				if unicode.IsControl(rn) {
+					character = fmt.Sprintf("%U", rn)[2:]
+					character = `\u` + character
+				} else {
+					character = string(rn)
+				}
+				lexer.Start = lexer.Pos - 1
+				return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid character "%s" found within string`, lexer.Line, lexer.Column-1, character)
+			}
+			index++
 		}
 	}
 	lexer.Emit(STRING)

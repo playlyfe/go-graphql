@@ -104,7 +104,9 @@ func NewExecutor(schemaDefinition string, resolvers map[string]interface{}) (*Ex
 func (executor *Executor) Execute(context interface{}, request string, variables map[string]interface{}, operationName string) (map[string]interface{}, error) {
 	parser := &Parser{}
 
-	document, err := parser.Parse(request)
+	document, err := parser.Parse(&ParseParams{
+		Source: request,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +204,8 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			visitedFragments.Add(fragmentSpreadName, true)
 			log.Printf("evaluating fragment spread '%s'", fragmentSpreadName)
+			if reqCtx.Document.FragmentIndex == nil {
+				continue
 			fragment, ok := reqCtx.Document.FragmentIndex[fragmentSpreadName]
 			if !ok {
 				continue
