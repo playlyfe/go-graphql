@@ -19,6 +19,7 @@ type Document struct {
 	Definitions          []ASTNode
 	FragmentIndex        map[string]*FragmentDefinition
 	ObjectTypeIndex      map[string]*ObjectTypeDefinition
+	TypeExtensionIndex   map[string]*TypeExtensionDefinition
 	InterfaceTypeIndex   map[string]*InterfaceTypeDefinition
 	UnionTypeIndex       map[string]*UnionTypeDefinition
 	InputObjectTypeIndex map[string]*InputObjectTypeDefinition

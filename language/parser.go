@@ -140,6 +140,7 @@ func (parser *Parser) document() (*Document, error) {
 	scalarTypeIndex := map[string]*ScalarTypeDefinition{}
 	enumTypeIndex := map[string]*EnumTypeDefinition{}
 	typeIndex := map[string]ASTNode{}
+	typeExtensionIndex := map[string]*TypeExtensionDefinition{}
 	possibleTypesIndex := map[string][]*ObjectTypeDefinition{}
 	for {
 		definition, err := parser.definition()
@@ -162,6 +163,9 @@ func (parser *Parser) document() (*Document, error) {
 					possibleTypesIndex[interfaceName] = append(possibleTypesIndex[interfaceName], item)
 				}
 			}
+		case *TypeExtensionDefinition:
+			typeExtensionIndex[item.Definition.Name.Value] = item
+
 		case *InterfaceTypeDefinition:
 			interfaceTypeIndex[item.Name.Value] = item
 			typeIndex[item.Name.Value] = item
@@ -201,6 +205,9 @@ func (parser *Parser) document() (*Document, error) {
 	if len(objectTypeIndex) == 0 {
 		objectTypeIndex = nil
 	}
+	if len(typeExtensionIndex) == 0 {
+		typeExtensionIndex = nil
+	}
 	if len(interfaceTypeIndex) == 0 {
 		interfaceTypeIndex = nil
 	}
@@ -227,6 +234,7 @@ func (parser *Parser) document() (*Document, error) {
 		Definitions:          definitions,
 		FragmentIndex:        fragmentIndex,
 		ObjectTypeIndex:      objectTypeIndex,
+		TypeExtensionIndex:   typeExtensionIndex,
 		InterfaceTypeIndex:   interfaceTypeIndex,
 		UnionTypeIndex:       unionTypeIndex,
 		InputObjectTypeIndex: inputObjectTypeIndex,
@@ -1037,7 +1045,7 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
-	node.Fields = []*FieldDefinition{}
+	fields := []*FieldDefinition{}
 	fieldIndex := map[string]*FieldDefinition{}
 	for parser.lookahead.Type != RBRACE {
 		field, err := parser.fieldDefinition()
@@ -1045,13 +1053,16 @@ func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
 			return nil, err
 		}
 		fieldIndex[field.Name.Value] = field
-		node.Fields = append(node.Fields, field)
+		fields = append(fields, field)
 	}
 	err = parser.match(RBRACE)
 	if err != nil {
 		return nil, err
 	}
-	node.FieldIndex = fieldIndex
+	if len(fieldIndex) > 0 {
+		node.FieldIndex = fieldIndex
+		node.Fields = fields
+	}
 	node.LOC = parser.loc(start)
 	return node, nil
 }

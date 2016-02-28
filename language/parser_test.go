@@ -4,7 +4,9 @@ import (
 	//"encoding/json"
 	"fmt"
 	. "github.com/smartystreets/goconvey/convey"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 var KITCHEN_SINK = `
@@ -66,6 +68,122 @@ fragment frag on Friend {
   query
 }
 `
+
+func createLOCFn(body string) func(start int, end int) *LOC {
+	lines := strings.Split(body, "\n")
+	return func(start int, end int) *LOC {
+		startIndex := 0
+		endIndex := 0
+		startCol := 1
+		endCol := 1
+		startLine := 1
+		endLine := 1
+		index := start
+		for {
+			lineLen := utf8.RuneCountInString(lines[startLine-1])
+			if lineLen > index {
+				startCol = index + 1
+				line := lines[startLine-1]
+				for index > 0 {
+					index--
+					_, width := utf8.DecodeRuneInString(line)
+					startIndex += width
+					line = line[width:]
+				}
+				break
+			} else {
+				index -= lineLen + 1
+				startIndex += len(lines[startLine-1]) + 1
+				startLine++
+			}
+		}
+		index = end
+		for {
+			lineLen := utf8.RuneCountInString(lines[endLine-1])
+			if lineLen >= index {
+				endCol = index + 1
+				line := lines[endLine-1]
+				for index > 0 {
+					index--
+					_, width := utf8.DecodeRuneInString(line)
+					endIndex += width
+					line = line[width:]
+				}
+				break
+			} else {
+				index -= lineLen + 1
+				endIndex += len(lines[endLine-1]) + 1
+				endLine++
+			}
+		}
+		return &LOC{
+			Source: body,
+			Start: &Position{
+				Index:  startIndex,
+				Line:   startLine,
+				Column: startCol,
+			},
+			End: &Position{
+				Index:  endIndex,
+				Line:   endLine,
+				Column: endCol,
+			},
+		}
+	}
+}
+
+func typeNode(name string, loc *LOC) *NamedType {
+	return &NamedType{
+		Name: nameNode(name, loc),
+		LOC:  loc,
+	}
+}
+
+func nameNode(name string, loc *LOC) *Name {
+	return &Name{
+		Value: name,
+		LOC:   loc,
+	}
+}
+
+func fieldNode(name *Name, ntype ASTNode, loc *LOC) *FieldDefinition {
+	return fieldNodeWithArgs(name, ntype, nil, loc)
+}
+
+func fieldNodeWithArgs(name *Name, ntype ASTNode, args []*InputValueDefinition, loc *LOC) *FieldDefinition {
+	argsIndex := map[string]*InputValueDefinition{}
+	if args != nil {
+		for _, arg := range args {
+			argsIndex[arg.Name.Value] = arg
+		}
+	} else {
+		argsIndex = nil
+	}
+	return &FieldDefinition{
+		Name:          name,
+		Arguments:     args,
+		ArgumentIndex: argsIndex,
+		Type:          ntype,
+		LOC:           loc,
+	}
+
+}
+
+func enumValueNode(name string, loc *LOC) *EnumValueDefinition {
+	return &EnumValueDefinition{
+		Name: nameNode(name, loc),
+		LOC:  loc,
+	}
+}
+
+func inputValueNode(name *Name, ntype ASTNode, defaultValue ASTNode, loc *LOC) *InputValueDefinition {
+	return &InputValueDefinition{
+		Name:         name,
+		Type:         ntype,
+		DefaultValue: defaultValue,
+		LOC:          loc,
+	}
+}
 
 func TestParser(t *testing.T) {
 
@@ -597,6 +715,652 @@ fragment MissingOn Type`,
 					},
 				},
 			})
+		})
+	})
+
+	Convey("Schema Parser", t, func() {
+
+		var result *Document
+		var err error
+		parser := &Parser{}
+
+		Convey("simple type", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world: String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNode(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(23, 29)),
+						loc(16, 29),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNode(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(23, 29)),
+						loc(16, 29),
+					),
+				},
+				LOC: loc(1, 31),
+			}
+
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 31),
+			})
+		})
+
+		Convey("simple extension", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+extend type Hello {
+  world: String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeExt := &TypeExtensionDefinition{
+				Definition: &ObjectTypeDefinition{
+					Name: nameNode("Hello", loc(13, 18)),
+					Fields: []*FieldDefinition{
+						fieldNode(
+							nameNode("world", loc(23, 28)),
+							typeNode("String", loc(30, 36)),
+							loc(23, 36),
+						),
+					},
+					FieldIndex: map[string]*FieldDefinition{
+						"world": fieldNode(
+							nameNode("world", loc(23, 28)),
+							typeNode("String", loc(30, 36)),
+							loc(23, 36),
+						),
+					},
+					LOC: loc(8, 38),
+				},
+				LOC: loc(1, 38),
+			}
+
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeExt,
+				},
+				TypeExtensionIndex: map[string]*TypeExtensionDefinition{
+					"Hello": helloTypeExt,
+				},
+				LOC: loc(1, 38),
+			})
+		})
+
+		Convey("simple non-null type", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world: String!
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNode(
+						nameNode("world", loc(16, 21)),
+						&NonNullType{
+							Type: typeNode("String", loc(23, 29)),
+							LOC:  loc(23, 30),
+						},
+						loc(16, 30),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNode(
+						nameNode("world", loc(16, 21)),
+						&NonNullType{
+							Type: typeNode("String", loc(23, 29)),
+							LOC:  loc(23, 30),
+						},
+						loc(16, 30),
+					),
+				},
+				LOC: loc(1, 32),
+			}
+
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 32),
+			})
+		})
+
+		Convey("simple type inheriting multiple interface", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `type Hello implements Wo, rld { }`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(5, 10)),
+				Interfaces: []*NamedType{
+					typeNode("Wo", loc(22, 24)),
+					typeNode("rld", loc(26, 29)),
+				},
+				LOC: loc(0, 33),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				PossibleTypesIndex: map[string][]*ObjectTypeDefinition{
+					"Wo":  []*ObjectTypeDefinition{helloTypeDef},
+					"rld": []*ObjectTypeDefinition{helloTypeDef},
+				},
+				LOC: loc(0, 33),
+			})
+		})
+
+		Convey("single value enum", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `enum Hello { WORLD }`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &EnumTypeDefinition{
+				Name: nameNode("Hello", loc(5, 10)),
+				Values: []*EnumValueDefinition{
+					enumValueNode("WORLD", loc(13, 18)),
+				},
+				LOC: loc(0, 20),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				EnumTypeIndex: map[string]*EnumTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(0, 20),
+			})
+		})
+
+		Convey("invalid enum value", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `enum Hello { null }`,
+			})
+			So(result, ShouldEqual, nil)
+			So(err.Error(), ShouldEqual, "GraphQL Syntax Error (1:14) Enum value cannot be \"null\"\n\n1|enum Hello { null }\n               ^^^^")
+
+			result, err = parser.Parse(&ParseParams{
+				Source: `enum Hello { WORLD true }`,
+			})
+			So(result, ShouldEqual, nil)
+			So(err.Error(), ShouldEqual, "GraphQL Syntax Error (1:20) Enum value cannot be \"true\"\n\n1|enum Hello { WORLD true }\n                     ^^^^")
+
+			result, err = parser.Parse(&ParseParams{
+				Source: `enum Hello { false WORLD }`,
+			})
+			So(result, ShouldEqual, nil)
+			So(err.Error(), ShouldEqual, "GraphQL Syntax Error (1:14) Enum value cannot be \"false\"\n\n1|enum Hello { false WORLD }\n               ^^^^^")
+		})
+
+		Convey("double value enum", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `enum Hello { WO, RLD }`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &EnumTypeDefinition{
+				Name: nameNode("Hello", loc(5, 10)),
+				Values: []*EnumValueDefinition{
+					enumValueNode("WO", loc(13, 15)),
+					enumValueNode("RLD", loc(17, 20)),
+				},
+				LOC: loc(0, 22),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				EnumTypeIndex: map[string]*EnumTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(0, 22),
+			})
+		})
+
+		Convey("simple interface", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+interface Hello {
+  world: String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &InterfaceTypeDefinition{
+				Name: nameNode("Hello", loc(11, 16)),
+				Fields: []*FieldDefinition{
+					&FieldDefinition{
+						Name: nameNode("world", loc(21, 26)),
+						Type: typeNode("String", loc(28, 34)),
+						LOC:  loc(21, 34),
+					},
+				},
+				LOC: loc(1, 36),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				InterfaceTypeIndex: map[string]*InterfaceTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 36),
+			})
+		})
+
+		Convey("simple field with arg", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world(flag: Boolean): String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(38, 44)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("flag", loc(22, 26)),
+								typeNode("Boolean", loc(28, 35)),
+								nil,
+								loc(22, 35),
+							),
+						},
+						loc(16, 44),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(38, 44)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("flag", loc(22, 26)),
+								typeNode("Boolean", loc(28, 35)),
+								nil,
+								loc(22, 35),
+							),
+						},
+						loc(16, 44),
+					),
+				},
+				LOC: loc(1, 46),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 46),
+			})
+		})
+
+		Convey("simple field with arg with default value", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world(flag: Boolean = true): String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(45, 51)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("flag", loc(22, 26)),
+								typeNode("Boolean", loc(28, 35)),
+								&Boolean{
+									Value: true,
+									LOC:   loc(38, 42),
+								},
+								loc(22, 42),
+							),
+						},
+						loc(16, 51),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(45, 51)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("flag", loc(22, 26)),
+								typeNode("Boolean", loc(28, 35)),
+								&Boolean{
+									Value: true,
+									LOC:   loc(38, 42),
+								},
+								loc(22, 42),
+							),
+						},
+						loc(16, 51),
+					),
+				},
+				LOC: loc(1, 53),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 53),
+			})
+		})
+
+		Convey("simple field with list arg", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world(things: [String]): String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(41, 47)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("things", loc(22, 28)),
+								&ListType{
+									Type: typeNode("String", loc(31, 37)),
+									LOC:  loc(30, 38),
+								},
+								nil,
+								loc(22, 38),
+							),
+						},
+						loc(16, 47),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(41, 47)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("things", loc(22, 28)),
+								&ListType{
+									Type: typeNode("String", loc(31, 37)),
+									LOC:  loc(30, 38),
+								},
+								nil,
+								loc(22, 38),
+							),
+						},
+						loc(16, 47),
+					),
+				},
+				LOC: loc(1, 49),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 49),
+			})
+		})
+
+		Convey("simple field with two arg", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+type Hello {
+  world(argOne: Boolean, argTwo: Int): String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ObjectTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Fields: []*FieldDefinition{
+					fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(53, 59)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("argOne", loc(22, 28)),
+								typeNode("Boolean", loc(30, 37)),
+								nil,
+								loc(22, 37),
+							),
+							inputValueNode(
+								nameNode("argTwo", loc(39, 45)),
+								typeNode("Int", loc(47, 50)),
+								nil,
+								loc(39, 50),
+							),
+						},
+						loc(16, 59),
+					),
+				},
+				FieldIndex: map[string]*FieldDefinition{
+					"world": fieldNodeWithArgs(
+						nameNode("world", loc(16, 21)),
+						typeNode("String", loc(53, 59)),
+						[]*InputValueDefinition{
+							inputValueNode(
+								nameNode("argOne", loc(22, 28)),
+								typeNode("Boolean", loc(30, 37)),
+								nil,
+								loc(22, 37),
+							),
+							inputValueNode(
+								nameNode("argTwo", loc(39, 45)),
+								typeNode("Int", loc(47, 50)),
+								nil,
+								loc(39, 50),
+							),
+						},
+						loc(16, 59),
+					),
+				},
+				LOC: loc(1, 61),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ObjectTypeIndex: map[string]*ObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 61),
+			})
+		})
+
+		Convey("Union with two types", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `union Hello = Wo | Rld`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &UnionTypeDefinition{
+				Name: nameNode("Hello", loc(6, 11)),
+				Types: []*NamedType{
+					typeNode("Wo", loc(14, 16)),
+					typeNode("Rld", loc(19, 22)),
+				},
+				LOC: loc(0, 22),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				UnionTypeIndex: map[string]*UnionTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				PossibleTypesIndex: map[string][]*ObjectTypeDefinition{
+					"Hello": []*ObjectTypeDefinition{nil, nil}, // These are nil because the object types are not defined in the document
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(0, 22),
+			})
+		})
+
+		Convey("Scalar", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `scalar Hello`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &ScalarTypeDefinition{
+				Name: nameNode("Hello", loc(7, 12)),
+				LOC:  loc(0, 12),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				ScalarTypeIndex: map[string]*ScalarTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(0, 12),
+			})
+		})
+
+		Convey("simple input object", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+input Hello {
+  world: String
+}`,
+			})
+			So(err, ShouldEqual, nil)
+			loc := createLOCFn(parser.source)
+
+			helloTypeDef := &InputObjectTypeDefinition{
+				Name: nameNode("Hello", loc(7, 12)),
+				Fields: []*InputValueDefinition{
+					inputValueNode(
+						nameNode("world", loc(17, 22)),
+						typeNode("String", loc(24, 30)),
+						nil,
+						loc(17, 30),
+					),
+				},
+				LOC: loc(1, 32),
+			}
+			So(result, ShouldResemble, &Document{
+				Definitions: []ASTNode{
+					helloTypeDef,
+				},
+				InputObjectTypeIndex: map[string]*InputObjectTypeDefinition{
+					"Hello": helloTypeDef,
+				},
+				TypeIndex: map[string]ASTNode{
+					"Hello": helloTypeDef,
+				},
+				LOC: loc(1, 32),
+			})
+		})
+
+		Convey("simple input object with args should fail", func() {
+			result, err = parser.Parse(&ParseParams{
+				Source: `
+input Hello {
+  world(foo: Int): String
+}`,
+			})
+			So(err, ShouldNotEqual, nil)
 		})
 	})
 
