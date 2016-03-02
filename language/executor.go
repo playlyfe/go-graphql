@@ -1,6 +1,7 @@
 package language
 
 import (
+	"fmt"
 	"log"
 	"playlyfe.com/go-graphql/utils"
 	"reflect"
@@ -21,10 +22,11 @@ type Error struct {
 }
 
 type RequestContext struct {
-	AppContext interface{}
-	Document   *Document
-	Errors     []*Error
-	Variables  map[string]interface{}
+	AppContext              interface{}
+	Document                *Document
+	Errors                  []*Error
+	Variables               map[string]interface{}
+	VariableDefinitionIndex map[string]*VariableDefinition
 }
 
 type FieldParams struct {
@@ -40,7 +42,7 @@ type Executor struct {
 	ErrorHandler func(err *Error) map[string]interface{}
 }
 
-func BuildValue(node ASTNode, variables map[string]interface{}) interface{} {
+func BuildValue(node ASTNode, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) interface{} {
 	switch value := node.(type) {
 	case *Int:
 		return value.Value
@@ -55,18 +57,57 @@ func BuildValue(node ASTNode, variables map[string]interface{}) interface{} {
 	case *Object:
 		result := map[string]interface{}{}
 		for _, field := range value.Fields {
-			result[field.Name.Value] = BuildValue(field.Value, variables)
+			result[field.Name.Value] = BuildValue(field.Value, variables, variableDefinitionIndex)
 		}
 		return result
 	case *List:
 		result := []interface{}{}
 		for _, item := range value.Values {
-			result = append(result, BuildValue(item, variables))
+			result = append(result, BuildValue(item, variables, variableDefinitionIndex))
 		}
 		return result
 	case *Variable:
-		if val, ok := variables[value.Name.Value]; ok {
-			return val
+		if vdef, ok := variableDefinitionIndex[value.Name.Value]; ok {
+			ttype := vdef.Type
+			if vtype, ok := vdef.Type.(*NonNullType); ok {
+				ttype = vtype.Type
+			}
+			if result, ok := variables[value.Name.Value]; ok {
+				switch ttype.(*NamedType).Name.Value {
+				case "Int":
+					val, ok := utils.CoerceInt(result)
+					if ok {
+						return val
+					} else {
+						return nil
+					}
+				case "Float":
+					val, ok := utils.CoerceFloat(result)
+					if ok {
+						return val
+					} else {
+						return nil
+					}
+				case "String":
+					val, ok := utils.CoerceString(result)
+					if ok {
+						return val
+					} else {
+						return nil
+					}
+				case "Boolean":
+					val, ok := utils.CoerceBoolean(result)
+					if ok {
+						return val
+					} else {
+						return nil
+					}
+				default:
+					return nil
+				}
+			} else {
+				return nil
+			}
 		} else {
 			return nil
 		}
@@ -75,8 +116,8 @@ func BuildValue(node ASTNode, variables map[string]interface{}) interface{} {
 	}
 }
 
-func NewExecutor(schemaDefinition string, resolvers map[string]interface{}) (*Executor, error) {
-	schema, schemaResolvers, err := NewSchema(schemaDefinition)
+func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string, resolvers map[string]interface{}) (*Executor, error) {
+	schema, schemaResolvers, err := NewSchema(schemaDefinition, queryRoot, mutationRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -88,15 +129,18 @@ func NewExecutor(schemaDefinition string, resolvers map[string]interface{}) (*Ex
 		Schema:    schema,
 		Resolvers: resolvers,
 		ErrorHandler: func(err *Error) map[string]interface{} {
-			return map[string]interface{}{
+			result := map[string]interface{}{
 				"message": err.Error.Error(),
-				"locations": []map[string]interface{}{
-					{
-						"line":   err.Field.LOC.Start.Line,
-						"column": err.Field.LOC.Start.Column,
-					},
-				},
 			}
+			if err.Field != nil {
+				result["locations"] = []map[string]interface{}{
+					{
+						"line":   err.Field.Name.LOC.Start.Line,
+						"column": err.Field.Name.LOC.Start.Column,
+					},
+				}
+			}
+			return result
 		},
 	}, nil
 }
@@ -119,17 +163,29 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		Variables:  variables,
 	}
 
+	notFound := true
+
 	for _, definition := range document.Definitions {
 		switch operationDefinition := definition.(type) {
 		case *OperationDefinition:
 			if (operationDefinition.Name != nil && operationDefinition.Name.Value == operationName) || operationName == "" {
+				if operationName == "" && notFound == false {
+					reqCtx.Errors = append(reqCtx.Errors, &Error{
+						Error: &GraphQLError{
+							Message: "GraphQL Runtime Error: Must provide operation name if query contains multiple operations",
+						},
+					})
+				}
+				notFound = false
 				if operationDefinition.Operation == "query" {
+					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
 					data, err := executor.selectionSet(reqCtx, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
 						return nil, err
 					}
 					result["data"] = data
 				} else if operationDefinition.Operation == "mutation" {
+					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
 					data, err := executor.selectionSet(reqCtx, executor.Schema.MutationRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
 						return nil, err
@@ -139,6 +195,14 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 			}
 		}
 	}
+	if notFound {
+		reqCtx.Errors = append(reqCtx.Errors, &Error{
+			Error: &GraphQLError{
+				Message: fmt.Sprintf("GraphQL Runtime Error: Operation with name %q not found in document", operationName),
+			},
+		})
+	}
+
 	if len(reqCtx.Errors) > 0 {
 		errs := []map[string]interface{}{}
 		for _, err := range reqCtx.Errors {
@@ -167,10 +231,10 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 		// if includeDirective's if argument is false then continue
 		switch selection := item.(type) {
 		case *Field:
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == true {
 				continue
 			}
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == false {
 				continue
 			}
 
@@ -190,13 +254,6 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			groupedFields[responseKey] = append(groupForResponseKey, selection)
 			log.Printf("adding selection '%s' to grouped fields of '%s'", selection.Name.Value, responseKey)
 		case *FragmentSpread:
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
-				continue
-			}
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
-				continue
-			}
-
 			var fragmentSpreadName string
 			fragmentSpreadName = selection.Name.Value
 			if visitedFragments.Has(fragmentSpreadName) {
@@ -206,14 +263,29 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			log.Printf("evaluating fragment spread '%s'", fragmentSpreadName)
 			if reqCtx.Document.FragmentIndex == nil {
 				continue
+			}
 			fragment, ok := reqCtx.Document.FragmentIndex[fragmentSpreadName]
 			if !ok {
 				continue
 			}
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == true {
+				continue
+			}
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == false {
+				continue
+			}
+			if fragment.DirectiveIndex != nil && fragment.DirectiveIndex["skip"] != nil && fragment.DirectiveIndex["skip"].ArgumentIndex != nil && fragment.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(fragment.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == true {
+				continue
+			}
+			if fragment.DirectiveIndex != nil && fragment.DirectiveIndex["include"] != nil && fragment.DirectiveIndex["include"].ArgumentIndex != nil && fragment.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(fragment.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == false {
+				continue
+			}
+			println("INCLUDED")
+
 			if !executor.doesFragmentTypeApply(objectType, fragment.TypeCondition) {
 				continue
 			}
-			fragmentGroupedFields, err := executor.collectFields(reqCtx, objectType, fragment.SelectionSet, &utils.Set{})
+			fragmentGroupedFields, err := executor.collectFields(reqCtx, objectType, fragment.SelectionSet, visitedFragments)
 			if err != nil {
 				return nil, err
 			}
@@ -226,17 +298,17 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 				groupedFields[responseKey] = append(groupForResponseKey, fragmentGroup...)
 			}
 		case *InlineFragment:
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == true {
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil && selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == true {
 				continue
 			}
-			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables).(bool) == false {
+			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil && selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil && BuildValue(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, reqCtx.Variables, reqCtx.VariableDefinitionIndex).(bool) == false {
 				continue
 			}
 
 			if selection.TypeCondition != nil && !executor.doesFragmentTypeApply(objectType, selection.TypeCondition) {
 				continue
 			}
-			fragmentGroupedFields, err := executor.collectFields(reqCtx, objectType, selection.SelectionSet, &utils.Set{})
+			fragmentGroupedFields, err := executor.collectFields(reqCtx, objectType, selection.SelectionSet, visitedFragments)
 			if err != nil {
 				return nil, err
 			}
@@ -313,7 +385,7 @@ func (executor *Executor) getFieldEntry(reqCtx *RequestContext, objectType *Obje
 		return responseKey, nil, nil
 	}
 	subSelectionSet := executor.mergeSelectionSets(fields)
-	responseValue, err := executor.completeValue(reqCtx, fieldType, resolvedObject, subSelectionSet)
+	responseValue, err := executor.completeValue(reqCtx, fieldType, firstField, resolvedObject, subSelectionSet)
 	if err != nil {
 		return "", nil, err
 	}
@@ -332,12 +404,12 @@ func (executor *Executor) mergeSelectionSets(fields []*Field) *SelectionSet {
 	return selectionSet
 }
 
-func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNode, result interface{}, subSelectionSet *SelectionSet) (interface{}, error) {
+func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNode, field *Field, result interface{}, subSelectionSet *SelectionSet) (interface{}, error) {
 	//var err error
 	log.Printf("completing value on %#v", result)
 	if nonNullType, ok := fieldType.(*NonNullType); ok {
 		innerType := nonNullType.Type
-		completedResult, err := executor.completeValue(reqCtx, innerType, result, subSelectionSet)
+		completedResult, err := executor.completeValue(reqCtx, innerType, field, result, subSelectionSet)
 		log.Printf("completed result of %#v is %#v", result, completedResult)
 		if err != nil {
 			return nil, err
@@ -365,9 +437,12 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 		completedResults := []interface{}{}
 		for index := 0; index < resultVal.Len(); index++ {
 			val := resultVal.Index(index).Interface()
-			completedItem, err := executor.completeValue(reqCtx, innerType, val, subSelectionSet)
+			completedItem, err := executor.completeValue(reqCtx, innerType, field, val, subSelectionSet)
 			if err != nil {
-				return nil, err
+				reqCtx.Errors = append(reqCtx.Errors, &Error{
+					Error: err,
+					Field: field,
+				})
 			}
 			completedResults = append(completedResults, completedItem)
 		}
@@ -415,14 +490,14 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
 		if interfaceType, ok := executor.Schema.Document.InterfaceTypeIndex[typeName]; ok {
-			objectType, err := executor.resolveAbstractType(interfaceType, result)
+			objectType, err := executor.resolveAbstractType(field, interfaceType, result)
 			if err != nil {
 				return nil, err
 			}
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
 		if unionType, ok := executor.Schema.Document.UnionTypeIndex[typeName]; ok {
-			objectType, err := executor.resolveAbstractType(unionType, result)
+			objectType, err := executor.resolveAbstractType(field, unionType, result)
 			if err != nil {
 				return nil, err
 			}
@@ -481,7 +556,6 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			}
 			return valueField.Interface(), nil
 		}
-		return nil, nil
 	}
 	resolverName := objectType.Name.Value + "/" + firstField.Name.Value
 	if resolver, ok := executor.Resolvers[resolverName]; ok {
@@ -496,7 +570,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			Schema:  executor.Schema.Document,
 			Context: reqCtx.AppContext,
 			Source:  object,
-			Args:    executor.buildArguments(objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.Arguments, reqCtx.Variables),
+			Args:    executor.buildArguments(objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.Arguments, reqCtx.Variables, reqCtx.VariableDefinitionIndex),
 		})
 		if err != nil {
 			// TODO: Check how to proceed
@@ -513,13 +587,13 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 	return nil, nil
 }
 
-func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDefinition, arguments []*Argument, variables map[string]interface{}) map[string]interface{} {
+func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDefinition, arguments []*Argument, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) map[string]interface{} {
 	result := map[string]interface{}{}
 	for _, argument := range arguments {
-		value := BuildValue(argument.Value, variables)
+		value := BuildValue(argument.Value, variables, variableDefinitionIndex)
 		defaultValue := argumentIndex[argument.Name.Value].DefaultValue
 		if value == nil && defaultValue != nil {
-			value = BuildValue(defaultValue, variables)
+			value = BuildValue(defaultValue, variables, variableDefinitionIndex)
 		}
 		if value != nil {
 			result[argument.Name.Value] = value
@@ -527,7 +601,7 @@ func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDef
 	}
 	for _, argumentDefinition := range argumentIndex {
 		if _, ok := result[argumentDefinition.Name.Value]; !ok && argumentDefinition.DefaultValue != nil {
-			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue, variables)
+			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue, variables, variableDefinitionIndex)
 			if defaultValue != nil {
 				result[argumentDefinition.Name.Value] = defaultValue
 			}
@@ -546,7 +620,7 @@ func (executor *Executor) getFieldTypeFromObjectType(objectType *ObjectTypeDefin
 	return nil
 }
 
-func (executor *Executor) resolveAbstractType(abstractType ASTNode, value interface{}) (*ObjectTypeDefinition, error) {
+func (executor *Executor) resolveAbstractType(field *Field, abstractType ASTNode, value interface{}) (*ObjectTypeDefinition, error) {
 	typeName := executor.ResolveType(value)
 	schema := executor.Schema.Document
 	if typeName == "" {
@@ -556,21 +630,31 @@ func (executor *Executor) resolveAbstractType(abstractType ASTNode, value interf
 	}
 	switch typeValue := abstractType.(type) {
 	case *InterfaceTypeDefinition:
-		objectType := schema.ObjectTypeIndex[typeName]
-		for _, implementedInterface := range objectType.Interfaces {
-			if implementedInterface.Name.Value == typeName {
-				return objectType, nil
-			}
-		}
-	case *UnionTypeDefinition:
-		unionType := schema.UnionTypeIndex[typeValue.Name.Value]
-		for _, possibleType := range unionType.Types {
+		for _, possibleType := range schema.PossibleTypesIndex[typeValue.Name.Value] {
 			if possibleType.Name.Value == typeName {
 				return schema.ObjectTypeIndex[typeName], nil
 			}
 		}
-	}
-	return nil, &GraphQLError{
-		Message: "Could not resolve abstract type",
+		return nil, &GraphQLError{
+			Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for interface type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
+			Source:  field.Name.LOC.Source,
+			Start:   field.Name.LOC.Start,
+			End:     field.Name.LOC.End,
+		}
+	case *UnionTypeDefinition:
+		unionType := schema.UnionTypeIndex[typeValue.Name.Value]
+		for _, possibleType := range schema.PossibleTypesIndex[unionType.Name.Value] {
+			if possibleType.Name.Value == typeName {
+				return schema.ObjectTypeIndex[typeName], nil
+			}
+		}
+		return nil, &GraphQLError{
+			Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for union type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
+			Source:  field.LOC.Source,
+			Start:   field.Name.LOC.Start,
+			End:     field.Name.LOC.End,
+		}
+	default:
+		panic("Invalid Abstract Type found in GraphQL Document")
 	}
 }

@@ -319,7 +319,7 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 			}
 		}
 		if parser.lookahead.Type == LPAREN {
-			node.VariableDefinitions, err = parser.variableDefinitions()
+			node.VariableDefinitions, node.VariableDefinitionIndex, err = parser.variableDefinitions()
 			if err != nil {
 				return nil, err
 			}
@@ -349,27 +349,32 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 /**
  * VariableDefinitions : ( VariableDefinition+ )
  */
-func (parser *Parser) variableDefinitions() ([]*VariableDefinition, error) {
+func (parser *Parser) variableDefinitions() ([]*VariableDefinition, map[string]*VariableDefinition, error) {
 	variableDefinitions := []*VariableDefinition{}
+	variableDefinitionIndex := map[string]*VariableDefinition{}
 	err := parser.match(LPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for {
 		variableDefinition, err := parser.variableDefinition()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		variableDefinitions = append(variableDefinitions, variableDefinition)
+		variableDefinitionIndex[variableDefinition.Variable.Name.Value] = variableDefinition
 		if parser.lookahead.Type == RPAREN {
 			break
 		}
 	}
+	if len(variableDefinitions) == 0 {
+		variableDefinitionIndex = nil
+	}
 	err = parser.match(RPAREN)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return variableDefinitions, nil
+	return variableDefinitions, variableDefinitionIndex, nil
 }
 
 /**

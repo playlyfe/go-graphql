@@ -31,13 +31,14 @@ type Document struct {
 }
 
 type OperationDefinition struct {
-	Operation           string
-	Name                *Name
-	VariableDefinitions []*VariableDefinition
-	Directives          []*Directive
-	DirectiveIndex      map[string]*Directive
-	SelectionSet        *SelectionSet
-	LOC                 *LOC
+	Operation               string
+	Name                    *Name
+	VariableDefinitions     []*VariableDefinition
+	VariableDefinitionIndex map[string]*VariableDefinition
+	Directives              []*Directive
+	DirectiveIndex          map[string]*Directive
+	SelectionSet            *SelectionSet
+	LOC                     *LOC
 }
 
 type SelectionSet struct {

@@ -128,7 +128,7 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 					"name":         inputValueDefinition.Name.Value,
 					"description":  inputValueDefinition.Description,
 					"type":         introspectType(schema, inputValueDefinition.Type),
-					"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
+					"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}, nil),
 				})
 			}
 			typeInfo["inputFields"] = inputFields
@@ -158,7 +158,7 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 	}
 }
 
-func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error) {
+func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (*Schema, map[string]interface{}, error) {
 	parser := &Parser{}
 	schema := &Schema{}
 	ast, err := parser.Parse(&ParseParams{
@@ -170,9 +170,9 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 	for _, definition := range ast.Definitions {
 		switch operationDefinition := definition.(type) {
 		case *ObjectTypeDefinition:
-			if operationDefinition.Name.Value == "QueryRoot" {
+			if operationDefinition.Name.Value == queryRoot {
 				schema.QueryRoot = operationDefinition
-			} else if operationDefinition.Name.Value == "MutationRoot" {
+			} else if operationDefinition.Name.Value == mutationRoot {
 				schema.MutationRoot = operationDefinition
 			}
 		}
@@ -182,11 +182,11 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 			Message: "The QueryRoot could not be found",
 		}
 	}
-	if schema.MutationRoot == nil {
+	/*if schema.MutationRoot == nil {
 		return nil, nil, &GraphQLError{
 			Message: "The MutationRoot could not be found",
 		}
-	}
+	}*/
 	// Add implict fields to query root
 	schemaField := &FieldDefinition{
 		Name: &Name{
@@ -316,7 +316,7 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
 							"type":         inputValueDefinition.Type,
-							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
+							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}, nil),
 						})
 					}
 					fields = append(fields, map[string]interface{}{
@@ -343,7 +343,7 @@ func NewSchema(schemaDefinition string) (*Schema, map[string]interface{}, error)
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
 							"type":         inputValueDefinition.Type,
-							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}),
+							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}, nil),
 						})
 					}
 					fields = append(fields, map[string]interface{}{
