@@ -26,6 +26,7 @@ type Document struct {
 	ScalarTypeIndex      map[string]*ScalarTypeDefinition
 	EnumTypeIndex        map[string]*EnumTypeDefinition
 	TypeIndex            map[string]ASTNode
+	OperationIndex       map[string]*OperationDefinition
 	PossibleTypesIndex   map[string][]*ObjectTypeDefinition
 	LOC                  *LOC
 }
@@ -44,6 +45,55 @@ type OperationDefinition struct {
 type SelectionSet struct {
 	Selections []ASTNode
 	LOC        *LOC
+}
+
+func (ss *SelectionSet) SelectionNames(doc *Document, whitelist []string) []string {
+	result := []string{}
+	whitelistMap := map[string]bool{}
+	if whitelist != nil {
+		for _, name := range whitelist {
+			whitelistMap[name] = true
+		}
+	} else {
+		whitelistMap = nil
+	}
+	names := ss.selectionNames(doc, whitelistMap)
+	for name, _ := range names {
+		result = append(result, name)
+	}
+	return result
+}
+
+func (ss *SelectionSet) selectionNames(doc *Document, whitelistMap map[string]bool) map[string]bool {
+	result := map[string]bool{}
+	for _, selection := range ss.Selections {
+		switch field := selection.(type) {
+		case *InlineFragment:
+			names := field.SelectionSet.selectionNames(doc, whitelistMap)
+			for name, _ := range names {
+				if _, ok := result[name]; !ok {
+					result[name] = true
+				}
+			}
+		case *FragmentSpread:
+			fragment := doc.FragmentIndex[field.Name.Value]
+			if fragment != nil {
+				names := fragment.SelectionSet.selectionNames(doc, whitelistMap)
+				for name, _ := range names {
+					if _, ok := result[name]; !ok {
+						result[name] = true
+					}
+				}
+			}
+		case *Field:
+			if whitelistMap == nil {
+				result[field.Name.Value] = true
+			} else if _, ok := whitelistMap[field.Name.Value]; ok {
+				result[field.Name.Value] = true
+			}
+		}
+	}
+	return result
 }
 
 type VariableDefinition struct {

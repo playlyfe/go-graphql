@@ -1,19 +1,23 @@
-package language
+package graphql
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"math"
+	. "playlyfe.com/go-graphql/language"
 	"playlyfe.com/go-graphql/utils"
 	"reflect"
 	"strings"
 )
 
 type ResolveParams struct {
-	Schema     *Document
-	Context    interface{}
-	Source     interface{}
-	Args       map[string]interface{}
-	Selections []string
+	Request *Document
+	Schema  *Document
+	Context interface{}
+	Source  interface{}
+	Args    map[string]interface{}
+	Field   *Field
 }
 
 type Error struct {
@@ -37,6 +41,7 @@ type FieldParams struct {
 
 type Executor struct {
 	ResolveType  func(value interface{}) string
+	IsNullish    func(value interface{}) bool
 	Schema       *Schema
 	Resolvers    map[string]interface{}
 	ErrorHandler func(err *Error) map[string]interface{}
@@ -88,7 +93,7 @@ func BuildValue(node ASTNode, variables map[string]interface{}, variableDefiniti
 					} else {
 						return nil
 					}
-				case "String":
+				case "String", "ID":
 					val, ok := utils.CoerceString(result)
 					if ok {
 						return val
@@ -128,6 +133,21 @@ func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string,
 	return &Executor{
 		Schema:    schema,
 		Resolvers: resolvers,
+		IsNullish: func(value interface{}) bool {
+			if value, ok := value.(string); ok {
+				return value == ""
+			}
+			if value, ok := value.(int); ok {
+				return math.IsNaN(float64(value))
+			}
+			if value, ok := value.(float32); ok {
+				return math.IsNaN(float64(value))
+			}
+			if value, ok := value.(float64); ok {
+				return math.IsNaN(value)
+			}
+			return value == nil
+		},
 		ErrorHandler: func(err *Error) map[string]interface{} {
 			result := map[string]interface{}{
 				"message": err.Error.Error(),
@@ -143,6 +163,94 @@ func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string,
 			return result
 		},
 	}, nil
+}
+
+func (executor *Executor) PrintSchema() string {
+	introspectionQuery := `
+    query IntrospectionQuery {
+        __schema {
+            queryType { name }
+            mutationType { name }
+            subscriptionType { name }
+            types {
+                ...FullType
+            }
+            directives {
+                name
+                description
+                args {
+                    ...InputValue
+                }
+                onOperation
+                onFragment
+                onField
+            }
+        }
+    }
+    fragment FullType on __Type {
+        kind
+        name
+        description
+        fields(includeDeprecated: true) {
+            name
+            description
+            args {
+                ...InputValue
+            }
+            type {
+                ...TypeRef
+            }
+            isDeprecated
+            deprecationReason
+        }
+        inputFields {
+            ...InputValue
+        }
+        interfaces {
+            ...TypeRef
+        }
+        enumValues(includeDeprecated: true) {
+            name
+            description
+            isDeprecated
+            deprecationReason
+        }
+        possibleTypes {
+            ...TypeRef
+        }
+    }
+    fragment InputValue on __InputValue {
+        name
+        description
+        type { ...TypeRef }
+        defaultValue
+    }
+    fragment TypeRef on __Type {
+        kind
+        name
+        ofType {
+            kind
+            name
+            ofType {
+                kind
+                name
+                ofType {
+                    kind
+                    name
+                }
+            }
+        }
+    }
+    `
+	result, err := executor.Execute(nil, introspectionQuery, map[string]interface{}{}, "IntrospectionQuery")
+	if err != nil {
+		panic(err)
+	}
+	output, err := json.MarshalIndent(result, "", "    ")
+	if err != nil {
+		panic(err)
+	}
+	return string(output)
 }
 
 func (executor *Executor) Execute(context interface{}, request string, variables map[string]interface{}, operationName string) (map[string]interface{}, error) {
@@ -381,13 +489,21 @@ func (executor *Executor) getFieldEntry(reqCtx *RequestContext, objectType *Obje
 	if err != nil {
 		return "", nil, err
 	}
+	subSelectionSet := executor.mergeSelectionSets(fields)
+	responseValue, err := executor.completeValue(reqCtx, objectType, fieldType, firstField, resolvedObject, subSelectionSet)
+	if err != nil {
+		if _, ok := err.(*GraphQLError); ok {
+			reqCtx.Errors = append(reqCtx.Errors, &Error{
+				Error: err,
+				Field: firstField,
+			})
+			return responseKey, nil, nil
+		} else {
+			return "", nil, err
+		}
+	}
 	if resolvedObject == nil {
 		return responseKey, nil, nil
-	}
-	subSelectionSet := executor.mergeSelectionSets(fields)
-	responseValue, err := executor.completeValue(reqCtx, fieldType, firstField, resolvedObject, subSelectionSet)
-	if err != nil {
-		return "", nil, err
 	}
 	return responseKey, responseValue, nil
 }
@@ -404,26 +520,26 @@ func (executor *Executor) mergeSelectionSets(fields []*Field) *SelectionSet {
 	return selectionSet
 }
 
-func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNode, field *Field, result interface{}, subSelectionSet *SelectionSet) (interface{}, error) {
+func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *ObjectTypeDefinition, fieldType ASTNode, field *Field, result interface{}, subSelectionSet *SelectionSet) (interface{}, error) {
 	//var err error
 	log.Printf("completing value on %#v", result)
 	if nonNullType, ok := fieldType.(*NonNullType); ok {
 		innerType := nonNullType.Type
-		completedResult, err := executor.completeValue(reqCtx, innerType, field, result, subSelectionSet)
+		completedResult, err := executor.completeValue(reqCtx, objectType, innerType, field, result, subSelectionSet)
 		log.Printf("completed result of %#v is %#v", result, completedResult)
 		if err != nil {
 			return nil, err
 		}
 		if completedResult == nil {
 			return nil, &GraphQLError{
-				Message: "Cannot return null for non-null value",
+				Message: fmt.Sprintf("Cannot return null for non-nullable field %s.%s", objectType.Name.Value, field.Name.Value),
 			}
 		}
 		return completedResult, nil
 	}
 
 	resultVal := reflect.ValueOf(result)
-	if !resultVal.IsValid() || result == nil {
+	if !resultVal.IsValid() || executor.IsNullish(result) {
 		return nil, nil
 	}
 
@@ -437,12 +553,9 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 		completedResults := []interface{}{}
 		for index := 0; index < resultVal.Len(); index++ {
 			val := resultVal.Index(index).Interface()
-			completedItem, err := executor.completeValue(reqCtx, innerType, field, val, subSelectionSet)
+			completedItem, err := executor.completeValue(reqCtx, objectType, innerType, field, val, subSelectionSet)
 			if err != nil {
-				reqCtx.Errors = append(reqCtx.Errors, &Error{
-					Error: err,
-					Field: field,
-				})
+				return nil, err
 			}
 			completedResults = append(completedResults, completedItem)
 		}
@@ -463,7 +576,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 		} else {
 			return nil, nil
 		}
-	case "String":
+	case "String", "ID":
 		val, ok := utils.CoerceString(result)
 		if ok {
 			return val, nil
@@ -490,22 +603,28 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, fieldType ASTNod
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
 		if interfaceType, ok := executor.Schema.Document.InterfaceTypeIndex[typeName]; ok {
-			objectType, err := executor.resolveAbstractType(field, interfaceType, result)
+			objectType, err := executor.resolveAbstractType(reqCtx, field, interfaceType, result)
 			if err != nil {
 				return nil, err
+			}
+			if objectType == nil {
+				return nil, nil
 			}
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
 		if unionType, ok := executor.Schema.Document.UnionTypeIndex[typeName]; ok {
-			objectType, err := executor.resolveAbstractType(field, unionType, result)
+			objectType, err := executor.resolveAbstractType(reqCtx, field, unionType, result)
 			if err != nil {
 				return nil, err
+			}
+			if objectType == nil {
+				return nil, nil
 			}
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}
 
 		return nil, &GraphQLError{
-			Message: "Unknown type",
+			Message: "Unknown type " + typeName,
 		}
 	}
 	return nil, nil
@@ -568,9 +687,11 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 		}
 		result, err := resolveFn(&ResolveParams{
 			Schema:  executor.Schema.Document,
+			Request: reqCtx.Document,
 			Context: reqCtx.AppContext,
 			Source:  object,
 			Args:    executor.buildArguments(objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.Arguments, reqCtx.Variables, reqCtx.VariableDefinitionIndex),
+			Field:   firstField,
 		})
 		if err != nil {
 			// TODO: Check how to proceed
@@ -607,12 +728,15 @@ func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDef
 			}
 		}
 	}
+	println("ARGS")
 	utils.PrintJSON(result)
 	return result
 }
 
 func (executor *Executor) getFieldTypeFromObjectType(objectType *ObjectTypeDefinition, firstField *Field) ASTNode {
+	println("AAA", objectType)
 	for _, field := range objectType.Fields {
+		println("BB")
 		if field.Name.Value == firstField.Name.Value {
 			return field.Type
 		}
@@ -620,7 +744,7 @@ func (executor *Executor) getFieldTypeFromObjectType(objectType *ObjectTypeDefin
 	return nil
 }
 
-func (executor *Executor) resolveAbstractType(field *Field, abstractType ASTNode, value interface{}) (*ObjectTypeDefinition, error) {
+func (executor *Executor) resolveAbstractType(reqCtx *RequestContext, field *Field, abstractType ASTNode, value interface{}) (*ObjectTypeDefinition, error) {
 	typeName := executor.ResolveType(value)
 	schema := executor.Schema.Document
 	if typeName == "" {
@@ -635,12 +759,16 @@ func (executor *Executor) resolveAbstractType(field *Field, abstractType ASTNode
 				return schema.ObjectTypeIndex[typeName], nil
 			}
 		}
-		return nil, &GraphQLError{
-			Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for interface type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
-			Source:  field.Name.LOC.Source,
-			Start:   field.Name.LOC.Start,
-			End:     field.Name.LOC.End,
-		}
+		reqCtx.Errors = append(reqCtx.Errors, &Error{
+			Error: &GraphQLError{
+				Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for interface type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
+				Source:  field.Name.LOC.Source,
+				Start:   field.Name.LOC.Start,
+				End:     field.Name.LOC.End,
+			},
+			Field: field,
+		})
+		return nil, nil
 	case *UnionTypeDefinition:
 		unionType := schema.UnionTypeIndex[typeValue.Name.Value]
 		for _, possibleType := range schema.PossibleTypesIndex[unionType.Name.Value] {
@@ -648,12 +776,16 @@ func (executor *Executor) resolveAbstractType(field *Field, abstractType ASTNode
 				return schema.ObjectTypeIndex[typeName], nil
 			}
 		}
-		return nil, &GraphQLError{
-			Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for union type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
-			Source:  field.LOC.Source,
-			Start:   field.Name.LOC.Start,
-			End:     field.Name.LOC.End,
-		}
+		reqCtx.Errors = append(reqCtx.Errors, &Error{
+			Error: &GraphQLError{
+				Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for union type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
+				Source:  field.LOC.Source,
+				Start:   field.Name.LOC.Start,
+				End:     field.Name.LOC.End,
+			},
+			Field: field,
+		})
+		return nil, nil
 	default:
 		panic("Invalid Abstract Type found in GraphQL Document")
 	}

@@ -1,4 +1,4 @@
-package language
+package graphql
 
 import (
 	"encoding/json"
@@ -293,7 +293,6 @@ func TestExecutor(t *testing.T) {
 				},
 			})
 		})
-
 	})
 
 	Convey("Execute: Handles directives", t, func() {
@@ -710,6 +709,215 @@ func TestExecutor(t *testing.T) {
 			})
 
 		})
+
+	})
+
+	Convey("Execute: Handles list nullability", t, func() {
+
+		check := func(testType string, testData interface{}, expected interface{}) {
+			data := map[string]interface{}{
+				"test": testData,
+			}
+
+			schema := fmt.Sprintf(`
+            type DataType {
+                test: %s
+                nest: DataType
+            }
+            `, testType)
+
+			resolvers := map[string]interface{}{}
+			resolvers["DataType/nest"] = func(params *ResolveParams) (interface{}, error) {
+				return data, nil
+			}
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			executor, err := NewExecutor(schema, "DataType", "", resolvers)
+			So(err, ShouldEqual, nil)
+			result, err := executor.Execute(context, `{ nest { test } }`, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, expected)
+		}
+
+		Convey("[T]", func() {
+			testType := "[Int]"
+			Convey("Array<T>", func() {
+				Convey("contains values", func() {
+					check(testType, []interface{}{1, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), int32(2)},
+							},
+						},
+					})
+				})
+				Convey("contains null", func() {
+					check(testType, []interface{}{1, nil, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), nil, int32(2)},
+							},
+						},
+					})
+				})
+				Convey("returns null", func() {
+					check(testType, nil, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+					})
+				})
+			})
+		})
+
+		Convey("[T]!", func() {
+			testType := "[Int]!"
+			Convey("Array<T>", func() {
+				Convey("contains values", func() {
+					check(testType, []interface{}{1, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), int32(2)},
+							},
+						},
+					})
+				})
+				Convey("contains null", func() {
+					check(testType, []interface{}{1, nil, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), nil, int32(2)},
+							},
+						},
+					})
+				})
+				Convey("returns null", func() {
+					check(testType, nil, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+						"errors": []map[string]interface{}{
+							{
+								"message": "Cannot return null for non-nullable field DataType.test",
+								"locations": []map[string]interface{}{
+									{
+										"column": 10,
+										"line":   1,
+									},
+								},
+							},
+						},
+					})
+				})
+			})
+		})
+
+		Convey("[T!]", func() {
+			testType := "[Int!]"
+			Convey("Array<T>", func() {
+				Convey("contains values", func() {
+					check(testType, []interface{}{1, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), int32(2)},
+							},
+						},
+					})
+				})
+				Convey("contains null", func() {
+					check(testType, []interface{}{1, nil, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+						"errors": []map[string]interface{}{
+							{
+								"message": "Cannot return null for non-nullable field DataType.test",
+								"locations": []map[string]interface{}{
+									{
+										"column": 10,
+										"line":   1,
+									},
+								},
+							},
+						},
+					})
+				})
+				Convey("returns null", func() {
+					check(testType, nil, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+					})
+				})
+			})
+		})
+
+		Convey("[T!]!", func() {
+			testType := "[Int!]!"
+			Convey("Array<T>", func() {
+				Convey("contains values", func() {
+					check(testType, []interface{}{1, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": []interface{}{int32(1), int32(2)},
+							},
+						},
+					})
+				})
+				Convey("contains null", func() {
+					check(testType, []interface{}{1, nil, 2}, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+						"errors": []map[string]interface{}{
+							{
+								"message": "Cannot return null for non-nullable field DataType.test",
+								"locations": []map[string]interface{}{
+									{
+										"column": 10,
+										"line":   1,
+									},
+								},
+							},
+						},
+					})
+				})
+				Convey("returns null", func() {
+					check(testType, nil, map[string]interface{}{
+						"data": map[string]interface{}{
+							"nest": map[string]interface{}{
+								"test": nil,
+							},
+						},
+						"errors": []map[string]interface{}{
+							{
+								"message": "Cannot return null for non-nullable field DataType.test",
+								"locations": []map[string]interface{}{
+									{
+										"column": 10,
+										"line":   1,
+									},
+								},
+							},
+						},
+					})
+				})
+			})
+		})
+
+	})
+
+	Convey("Execute: Handles mutation execution ordering", t, func() {
 
 	})
 

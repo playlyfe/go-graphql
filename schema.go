@@ -1,4 +1,9 @@
-package language
+package graphql
+
+import (
+	. "playlyfe.com/go-graphql/language"
+	"playlyfe.com/go-graphql/utils"
+)
 
 type Schema struct {
 	Document     *Document
@@ -11,6 +16,7 @@ scalar String
 scalar Boolean
 scalar Int
 scalar Float
+scalar ID
 
 type __Schema {
   types: [__Type!]!
@@ -91,18 +97,22 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 	typeIndex := schema.TypeIndex
 	switch ttype := typeValue.(type) {
 	case *NonNullType:
+		println("non-null")
 		return map[string]interface{}{
 			"kind":   "NON_NULL",
 			"ofType": introspectType(schema, ttype.Type),
 		}
 	case *ListType:
+		println("list")
 		return map[string]interface{}{
 			"kind":   "LIST",
 			"ofType": introspectType(schema, ttype.Type),
 		}
 	case *NamedType:
+		println(ttype.Name.Value)
 		return introspectType(schema, ttype.Name.Value)
 	case string:
+		println(ttype)
 		typeInfo := map[string]interface{}{
 			"name": ttype,
 		}
@@ -114,11 +124,7 @@ func introspectType(schema *Document, typeValue interface{}) map[string]interfac
 		case *ObjectTypeDefinition:
 			typeInfo["kind"] = "OBJECT"
 			typeInfo["description"] = __type.Description
-			interfaceTypes := []map[string]interface{}{}
-			for _, namedType := range __type.Interfaces {
-				interfaceTypes = append(interfaceTypes, introspectType(schema, namedType.Name.Value))
-			}
-			typeInfo["interfaces"] = interfaceTypes
+
 		case *InputObjectTypeDefinition:
 			typeInfo["kind"] = "INPUT_OBJECT"
 			typeInfo["description"] = __type.Description
@@ -238,10 +244,10 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	schema.QueryRoot.FieldIndex["__type"] = typeField
 	schema.QueryRoot.Fields = append(schema.QueryRoot.Fields, typeField)
 	resolvers := map[string]interface{}{}
-	resolvers["QueryRoot/__schema"] = func(params *ResolveParams) (interface{}, error) {
+	resolvers[queryRoot+"/__schema"] = func(params *ResolveParams) (interface{}, error) {
 		return map[string]interface{}{
-			"queryType":    introspectType(params.Schema, "QueryRoot"),
-			"mutationType": introspectType(params.Schema, "MutationRoot"),
+			"queryType":    introspectType(params.Schema, queryRoot),
+			"mutationType": introspectType(params.Schema, mutationRoot),
 			"directives": []map[string]interface{}{
 				{
 					"name":        "skip",
@@ -291,15 +297,20 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	resolvers["__Schema/types"] = func(params *ResolveParams) (interface{}, error) {
 		types := []map[string]interface{}{}
 		for typeName, _ := range params.Schema.TypeIndex {
+			if typeName == "__Schema" || typeName == "__Type" || typeName == "__Field" || typeName == "__InputValue" || typeName == "__EnumValue" || typeName == "__TypeKind" || typeName == "__Directive" {
+				continue
+			}
 			types = append(types, introspectType(params.Schema, typeName))
 		}
 		return types, nil
 	}
-	resolvers["QueryRoot/__type"] = func(params *ResolveParams) (interface{}, error) {
+	resolvers[queryRoot+"/__type"] = func(params *ResolveParams) (interface{}, error) {
 		return introspectType(params.Schema, params.Args["name"]), nil
 	}
 	resolvers["__Type/fields"] = func(params *ResolveParams) (interface{}, error) {
 		if typeInfo, ok := params.Source.(map[string]interface{}); ok {
+			println("asdasd")
+			utils.PrintJSON(typeInfo)
 			typeName := typeInfo["name"].(string)
 			if typeInfo["kind"] == "OBJECT" {
 				__type := params.Schema.TypeIndex[typeName].(*ObjectTypeDefinition)
@@ -310,12 +321,18 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					if !includeDeprecated && fieldDefinition.IsDeprecated {
 						continue
 					}
+					if typeName == queryRoot {
+						fieldName := fieldDefinition.Name.Value
+						if fieldName == "__schema" || fieldName == "__type" {
+							continue
+						}
+					}
 					args := []map[string]interface{}{}
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
-							"type":         inputValueDefinition.Type,
+							"type":         introspectType(params.Schema, inputValueDefinition.Type),
 							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}, nil),
 						})
 					}
@@ -342,7 +359,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
-							"type":         inputValueDefinition.Type,
+							"type":         introspectType(params.Schema, inputValueDefinition.Type),
 							"defaultValue": BuildValue(inputValueDefinition.DefaultValue, map[string]interface{}{}, nil),
 						})
 					}
@@ -360,9 +377,28 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 		}
 		return nil, nil
 	}
-
+	resolvers["__Type/interfaces"] = func(params *ResolveParams) (interface{}, error) {
+		if typeInfo, ok := params.Source.(map[string]interface{}); ok {
+			if typeName, ok := typeInfo["name"].(string); ok {
+				println(typeName)
+				__type := params.Schema.ObjectTypeIndex[typeName]
+				if __type != nil {
+					interfaceTypes := []map[string]interface{}{}
+					if __type.Interfaces != nil {
+						for _, namedType := range __type.Interfaces {
+							interfaceTypes = append(interfaceTypes, introspectType(params.Schema, namedType.Name.Value))
+						}
+					}
+					return interfaceTypes, nil
+				}
+			}
+		}
+		return nil, nil
+	}
 	resolvers["__Type/enumValues"] = func(params *ResolveParams) (interface{}, error) {
 		if typeInfo, ok := params.Source.(map[string]interface{}); ok {
+			println("asdasd")
+			utils.PrintJSON(typeInfo)
 			typeName := typeInfo["name"].(string)
 			if typeInfo["kind"] == "ENUM" {
 				__type := params.Schema.TypeIndex[typeName].(*EnumTypeDefinition)
