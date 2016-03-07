@@ -1,7 +1,7 @@
 package graphql
 
 import (
-	. "playlyfe.com/go-graphql/language"
+	. "github.com/playlyfe/go-graphql/language"
 )
 
 type Schema struct {

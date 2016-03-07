@@ -3,12 +3,13 @@ package graphql
 import (
 	"encoding/json"
 	"fmt"
-	//"log"
 	"math"
-	. "playlyfe.com/go-graphql/language"
-	"playlyfe.com/go-graphql/utils"
 	"reflect"
 	"strings"
+	//"log"
+
+	. "github.com/playlyfe/go-graphql/language"
+	"github.com/playlyfe/go-graphql/utils"
 )
 
 type ResolveParams struct {
