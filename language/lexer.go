@@ -51,6 +51,7 @@ const (
 	BOOL   // true, false
 	NULL   // null
 
+	DESCRIPTION
 )
 
 func (tokenType TokenType) String() string {
