@@ -846,16 +846,21 @@ func (parser *Parser) object(isConstant bool) (*Object, error) {
 		return nil, err
 	}
 	node := &Object{}
+	fieldIndex := map[string]*ObjectField{}
 	for parser.lookahead.Type != RBRACE {
 		field, err := parser.objectField(isConstant)
 		if err != nil {
 			return nil, err
 		}
 		node.Fields = append(node.Fields, field)
+		fieldIndex[field.Name.Value] = field
 	}
 	err = parser.match(RBRACE)
 	if err != nil {
 		return nil, err
+	}
+	if len(node.Fields) > 0 {
+		node.FieldIndex = fieldIndex
 	}
 	node.LOC = parser.loc(start)
 	return node, nil

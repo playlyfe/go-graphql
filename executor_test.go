@@ -43,6 +43,30 @@ type Article struct {
 	Keywords    []interface{} `json:"keywords"`
 }
 
+type NumberHolder struct {
+	TheNumber int32 `json:"theNumber"`
+}
+
+type Root struct {
+	NumberHolder *NumberHolder
+}
+
+func NewRoot(number int32) *Root {
+	return &Root{
+		NumberHolder: &NumberHolder{
+			TheNumber: number,
+		},
+	}
+}
+
+func (r *Root) changeTheNumber(newNumber int32) *NumberHolder {
+	r.NumberHolder.TheNumber = newNumber
+	return r.NumberHolder
+}
+func (r *Root) failToChangeTheNumber() error {
+	return errors.New("Cannot change the number")
+}
+
 func TestExecutor(t *testing.T) {
 	Convey("Execute: Handles execution of abstract types", t, func() {
 
@@ -796,9 +820,7 @@ func TestExecutor(t *testing.T) {
 				Convey("returns null", func() {
 					check(testType, nil, map[string]interface{}{
 						"data": map[string]interface{}{
-							"nest": map[string]interface{}{
-								"test": nil,
-							},
+							"nest": nil,
 						},
 						"errors": []map[string]interface{}{
 							{
@@ -875,9 +897,7 @@ func TestExecutor(t *testing.T) {
 				Convey("contains null", func() {
 					check(testType, []interface{}{1, nil, 2}, map[string]interface{}{
 						"data": map[string]interface{}{
-							"nest": map[string]interface{}{
-								"test": nil,
-							},
+							"nest": nil,
 						},
 						"errors": []map[string]interface{}{
 							{
@@ -895,9 +915,7 @@ func TestExecutor(t *testing.T) {
 				Convey("returns null", func() {
 					check(testType, nil, map[string]interface{}{
 						"data": map[string]interface{}{
-							"nest": map[string]interface{}{
-								"test": nil,
-							},
+							"nest": nil,
 						},
 						"errors": []map[string]interface{}{
 							{
@@ -918,6 +936,381 @@ func TestExecutor(t *testing.T) {
 	})
 
 	Convey("Execute: Handles mutation execution ordering", t, func() {
+		schema := `
+        type NumberHolder {
+            theNumber: Int
+        }
+
+        type Query {
+            numberHolder: NumberHolder
+        }
+
+        type Mutation {
+            changeTheNumber(newNumber: Int): NumberHolder
+            failToChangeTheNumber(newNumber: Int): NumberHolder
+        }
+        `
+		resolvers := map[string]interface{}{}
+		resolvers["Mutation/changeTheNumber"] = func(params *ResolveParams) (interface{}, error) {
+			obj := params.Context.(*Root)
+			obj.changeTheNumber(params.Args["newNumber"].(int32))
+			return obj.NumberHolder, nil
+		}
+		resolvers["Mutation/failToChangeTheNumber"] = func(params *ResolveParams) (interface{}, error) {
+			obj := params.Context.(*Root)
+			return nil, obj.failToChangeTheNumber()
+		}
+		executor, err := NewExecutor(schema, "Query", "Mutation", resolvers)
+		So(err, ShouldEqual, nil)
+
+		Convey("evaluates mutations serially", func() {
+			input := `
+            mutation M {
+                first: changeTheNumber(newNumber: 1) {
+                    theNumber
+                },
+                second: changeTheNumber(newNumber: 2) {
+                    theNumber
+                }
+                third: changeTheNumber(newNumber: 3) {
+                    theNumber
+                }
+            }
+            `
+			context := NewRoot(6)
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "M")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"first": map[string]interface{}{
+						"theNumber": int32(1),
+					},
+					"second": map[string]interface{}{
+						"theNumber": int32(2),
+					},
+					"third": map[string]interface{}{
+						"theNumber": int32(3),
+					},
+				},
+			})
+
+		})
+
+		Convey("evaluates mutations correctly in the presence of a failed mutation", func() {
+			input := `
+            mutation M {
+                first: changeTheNumber(newNumber: 1) {
+                    theNumber
+                },
+                second: failToChangeTheNumber(newNumber: 2) {
+                    theNumber
+                }
+                third: changeTheNumber(newNumber: 3) {
+                    theNumber
+                }
+                fourth: failToChangeTheNumber(newNumber: 4) {
+                    theNumber
+                }
+                fifth: changeTheNumber(newNumber: 5) {
+                    theNumber
+                }
+            }
+            `
+			context := NewRoot(6)
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "M")
+			So(err, ShouldEqual, nil)
+			So(result["data"], ShouldResemble, map[string]interface{}{
+				"first": map[string]interface{}{
+					"theNumber": int32(1),
+				},
+				"second": nil,
+				"third": map[string]interface{}{
+					"theNumber": int32(3),
+				},
+				"fourth": nil,
+				"fifth": map[string]interface{}{
+					"theNumber": int32(5),
+				},
+			})
+			errors := result["errors"].([]map[string]interface{})
+			So(len(errors), ShouldEqual, 2)
+			So(errors[0]["message"], ShouldEqual, "Cannot change the number")
+			So(errors[1]["message"], ShouldEqual, "Cannot change the number")
+		})
+	})
+
+	// Note: Error handling behaviour differs significantly from the graphql js reference implementation
+	Convey("Execute: Handles non-nullable types", t, func() {
+
+		schema := `
+        type DataType {
+            sync: String
+            nonNullSync: String!
+            nest: DataType
+            nonNullNest: DataType!
+        }
+        `
+		syncError := errors.New("sync")
+		nonNullSyncError := errors.New("nonNullSync")
+		throwingResolvers := map[string]interface{}{}
+		throwingResolvers["DataType/sync"] = func(params *ResolveParams) (interface{}, error) {
+			return nil, syncError
+		}
+		throwingResolvers["DataType/nonNullSync"] = func(params *ResolveParams) (interface{}, error) {
+			return nil, nonNullSyncError
+		}
+		throwingResolvers["DataType/nest"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+		throwingResolvers["DataType/nonNullNest"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+
+		nullingResolvers := map[string]interface{}{}
+		nullingResolvers["DataType/sync"] = func(params *ResolveParams) (interface{}, error) {
+			return nil, nil
+		}
+		nullingResolvers["DataType/nonNullSync"] = func(params *ResolveParams) (interface{}, error) {
+			return nil, nil
+		}
+		nullingResolvers["DataType/nest"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+		nullingResolvers["DataType/nonNullNest"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+
+		Convey("nulls a nullable field that throws synchronously", func() {
+			input := `
+            query Q {
+                sync
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", throwingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"sync": nil,
+				},
+				"errors": []map[string]interface{}{
+					{
+						"message": syncError.Error(),
+						"locations": []map[string]interface{}{
+							{
+								"line":   3,
+								"column": 17,
+							},
+						},
+					},
+				},
+			})
+		})
+
+		Convey("nulls a synchronously returned object that contains a non-nullable field that throws synchronously", func() {
+			input := `
+            query Q {
+                nest {
+                    nonNullSync
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", throwingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result["data"], ShouldResemble, map[string]interface{}{
+				"nest": nil,
+			})
+			errors := result["errors"].([]map[string]interface{})
+			So(len(errors), ShouldEqual, 2)
+			So(errors[0]["message"], ShouldEqual, nonNullSyncError.Error())
+			So(errors[1]["message"], ShouldEqual, "Cannot return null for non-nullable field DataType.nonNullSync")
+		})
+
+		Convey("nulls a complex tree of nullable fields that throw", func() {
+			input := `
+            query Q {
+                nest {
+                    sync
+                    nest {
+                        sync
+                    }
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", throwingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result["data"], ShouldResemble, map[string]interface{}{
+				"nest": map[string]interface{}{
+					"sync": nil,
+					"nest": map[string]interface{}{
+						"sync": nil,
+					},
+				},
+			})
+			errors := result["errors"].([]map[string]interface{})
+			So(len(errors), ShouldEqual, 2)
+			So(errors[0]["message"], ShouldEqual, syncError.Error())
+			So(errors[1]["message"], ShouldEqual, syncError.Error())
+		})
+
+		Convey("nulls the first nullable object after a field throws in a long chaing of fields that are non-null", func() {
+			input := `
+            query Q {
+                nest {
+                    nonNullNest {
+                        nonNullNest {
+                            nonNullNest {
+                                nonNullNest {
+                                    nonNullSync
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", throwingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result["data"], ShouldResemble, map[string]interface{}{
+				"nest": nil,
+			})
+			errors := result["errors"].([]map[string]interface{})
+			So(len(errors), ShouldEqual, 2)
+			So(errors[0]["message"], ShouldEqual, nonNullSyncError.Error())
+			So(errors[1]["message"], ShouldEqual, "Cannot return null for non-nullable field DataType.nonNullSync")
+		})
+
+		Convey("nulls a nullable field that synchronously returns null", func() {
+			input := `
+            query Q {
+                sync
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", nullingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"sync": nil,
+				},
+			})
+		})
+
+		Convey("nulls a synchronously returned object that contains a non-nullable field that returns null synchronously", func() {
+			input := `
+            query Q {
+                nest {
+                    nonNullSync,
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", nullingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"nest": nil,
+				},
+				"errors": []map[string]interface{}{
+					{
+						"message": "Cannot return null for non-nullable field DataType.nonNullSync",
+						"locations": []map[string]interface{}{
+							{
+								"column": 21,
+								"line":   4,
+							},
+						},
+					},
+				},
+			})
+		})
+
+		Convey("nulls a complex tree of nullable fields that return null", func() {
+			input := `
+            query Q {
+                nest {
+                    sync
+                    nest {
+                        sync
+                    }
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", nullingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"nest": map[string]interface{}{
+						"sync": nil,
+						"nest": map[string]interface{}{
+							"sync": nil,
+						},
+					},
+				},
+			})
+		})
+
+		Convey("nulls the first nullable object after a field returns null in a long chaing of fields that are non-null", func() {
+			input := `
+            query Q {
+                nest {
+                    nonNullNest {
+                        nonNullNest {
+                            nonNullNest {
+                                nonNullNest {
+                                    nonNullSync
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            `
+			executor, err := NewExecutor(schema, "DataType", "", throwingResolvers)
+			So(err, ShouldEqual, nil)
+			context := map[string]interface{}{}
+			variables := map[string]interface{}{}
+			result, err := executor.Execute(context, input, variables, "Q")
+			So(err, ShouldEqual, nil)
+			So(result["data"], ShouldResemble, map[string]interface{}{
+				"nest": nil,
+			})
+			errors := result["errors"].([]map[string]interface{})
+			So(len(errors), ShouldEqual, 2)
+			So(errors[0]["message"], ShouldEqual, nonNullSyncError.Error())
+			So(errors[1]["message"], ShouldEqual, "Cannot return null for non-nullable field DataType.nonNullSync")
+		})
+
+	})
+
+	Convey("Execute: Union and intersection types", t, func() {
 
 	})
 

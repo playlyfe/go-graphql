@@ -155,8 +155,9 @@ type List struct {
 }
 
 type Object struct {
-	Fields []*ObjectField
-	LOC    *LOC
+	Fields     []*ObjectField
+	FieldIndex map[string]*ObjectField
+	LOC        *LOC
 }
 
 type ObjectField struct {

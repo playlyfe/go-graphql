@@ -8,6 +8,7 @@ import (
 
 type GraphQLError struct {
 	Message string
+	Field   *Field
 	Source  string
 	Start   *Position
 	End     *Position
