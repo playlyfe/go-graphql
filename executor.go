@@ -786,16 +786,9 @@ func (executor *Executor) doesFragmentTypeApply(objectType *ObjectTypeDefinition
 	if objectType.Name.Value == typeName {
 		return true
 	}
-	if typeDefinition, ok := schema.InterfaceTypeIndex[typeName]; ok {
-		for _, implementedInterface := range objectType.Interfaces {
-			if implementedInterface.Name.Value == typeDefinition.Name.Value {
-				return true
-			}
-		}
-	}
-	if typeDefinition, ok := schema.UnionTypeIndex[typeName]; ok {
-		for _, possibleType := range typeDefinition.Types {
-			if possibleType.Name.Value == typeDefinition.Name.Value {
+	if possibleTypeDefinitions, ok := schema.PossibleTypesIndex[typeName]; ok {
+		for _, possibleType := range possibleTypeDefinitions {
+			if possibleType.Name.Value == objectType.Name.Value {
 				return true
 			}
 		}
@@ -1100,6 +1093,7 @@ func (executor *Executor) resolveAbstractType(reqCtx *RequestContext, field *Fie
 	if typeName == "" {
 		return nil, &GraphQLError{
 			Message: "The type of the value could not be determined",
+			Field:   field,
 		}
 	}
 	switch typeValue := abstractType.(type) {
