@@ -109,21 +109,23 @@ func (parser *Parser) name() (*Name, error) {
 }
 
 func (parser *Parser) description() (string, error) {
+	text := ""
+	isBody := false
 	token := parser.lookahead
-	err := parser.match(DESCRIPTION)
-	if err != nil {
-		return "", err
+	for token.Type == DESCRIPTION {
+		text += strings.Trim(token.Val[2:], " ")
+		if isBody {
+			text += " "
+		} else {
+			isBody = true
+		}
+		err := parser.match(DESCRIPTION)
+		if err != nil {
+			return text, err
+		}
+		token = parser.lookahead
 	}
-	return strings.Trim(token.Val[2:], " "), nil
-}
-
-func (parser *Parser) deprecation() (string, error) {
-	token := parser.lookahead
-	err := parser.match(DESCRIPTION)
-	if err != nil {
-		return "", err
-	}
-	return strings.Trim(token.Val[2:], " "), nil
+	return text, nil
 }
 
 /**
@@ -254,6 +256,10 @@ func (parser *Parser) document() (*Document, error) {
  *   - TypeExtensionDefinition
  */
 func (parser *Parser) definition() (ASTNode, error) {
+	description, err := parser.description()
+	if err != nil {
+		return nil, err
+	}
 	switch parser.lookahead.Type {
 	case NAME:
 		switch parser.lookahead.Val {
@@ -262,9 +268,9 @@ func (parser *Parser) definition() (ASTNode, error) {
 		case "mutation", "query", "subscription":
 			return parser.operationDefinition()
 		case "type", "interface", "union", "scalar", "enum", "input":
-			return parser.typeDefinition()
+			return parser.typeDefinition(description)
 		case "extend":
-			return parser.typeExtensionDefinition()
+			return parser.typeExtensionDefinition(description)
 		default:
 			return nil, &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
@@ -1004,20 +1010,20 @@ func (parser *Parser) namedType() (*NamedType, error) {
  *   - EnumTypeDefinition
  *   - InputObjectTypeDefinition
  */
-func (parser *Parser) typeDefinition() (ASTNode, error) {
+func (parser *Parser) typeDefinition(description string) (ASTNode, error) {
 	switch parser.lookahead.Val {
 	case "type":
-		return parser.objectTypeDefinition()
+		return parser.objectTypeDefinition(description)
 	case "interface":
-		return parser.interfaceTypeDefinition()
+		return parser.interfaceTypeDefinition(description)
 	case "union":
-		return parser.unionTypeDefinition()
+		return parser.unionTypeDefinition(description)
 	case "scalar":
-		return parser.scalarTypeDefinition()
+		return parser.scalarTypeDefinition(description)
 	case "enum":
-		return parser.enumTypeDefinition()
+		return parser.enumTypeDefinition(description)
 	case "input":
-		return parser.inputObjectTypeDefinition()
+		return parser.inputObjectTypeDefinition(description)
 	default:
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
@@ -1029,12 +1035,14 @@ func (parser *Parser) typeDefinition() (ASTNode, error) {
 }
 
 /**
- * ObjectTypeDefinition : Description? type Name ImplementsInterfaces? { FieldDefinition+ }
+ * ObjectTypeDefinition :  type Name ImplementsInterfaces? { FieldDefinition+ }
  */
-func (parser *Parser) objectTypeDefinition() (*ObjectTypeDefinition, error) {
+func (parser *Parser) objectTypeDefinition(description string) (*ObjectTypeDefinition, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &ObjectTypeDefinition{}
+	node := &ObjectTypeDefinition{
+		Description: description,
+	}
 
 	err = parser.matchName("type")
 	if err != nil {
@@ -1100,12 +1108,16 @@ func (parser *Parser) implementsInterfaces() ([]*NamedType, error) {
 }
 
 /**
- * FieldDefinition : Name ArgumentsDefinition? : Type
+ * FieldDefinition : Description* Name ArgumentsDefinition? : Type
  */
 func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 	var err error
 	node := &FieldDefinition{}
 	start := parser.lookahead.Start
+	node.Description, err = parser.description()
+	if err != nil {
+		return nil, err
+	}
 	node.Name, err = parser.name()
 	if err != nil {
 		return nil, err
@@ -1158,12 +1170,17 @@ func (parser *Parser) argumentDefs(node *FieldDefinition) ([]*InputValueDefiniti
 }
 
 /**
- * InputValueDefinition : Name : Type DefaultValue?
+ * InputValueDefinition : Description* Name : Type DefaultValue?
  */
 func (parser *Parser) inputValueDef() (*InputValueDefinition, error) {
 	var err error
 	node := &InputValueDefinition{}
 	start := parser.lookahead.Start
+
+	node.Description, err = parser.description()
+	if err != nil {
+		return nil, err
+	}
 	node.Name, err = parser.name()
 	if err != nil {
 		return nil, err
@@ -1193,9 +1210,11 @@ func (parser *Parser) inputValueDef() (*InputValueDefinition, error) {
 /**
  * InterfaceTypeDefinition : interface Name { FieldDefinition+ }
  */
-func (parser *Parser) interfaceTypeDefinition() (*InterfaceTypeDefinition, error) {
+func (parser *Parser) interfaceTypeDefinition(description string) (*InterfaceTypeDefinition, error) {
 	var err error
-	node := &InterfaceTypeDefinition{}
+	node := &InterfaceTypeDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err = parser.matchName("interface")
 	if err != nil {
@@ -1229,9 +1248,11 @@ func (parser *Parser) interfaceTypeDefinition() (*InterfaceTypeDefinition, error
 /**
  * UnionTypeDefinition : union Name = UnionMembers
  */
-func (parser *Parser) unionTypeDefinition() (*UnionTypeDefinition, error) {
+func (parser *Parser) unionTypeDefinition(description string) (*UnionTypeDefinition, error) {
 	var err error
-	node := &UnionTypeDefinition{}
+	node := &UnionTypeDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err = parser.matchName("union")
 	if err != nil {
@@ -1281,8 +1302,10 @@ func (parser *Parser) unionMembers() ([]*NamedType, error) {
 /**
  * ScalarTypeDefinition : scalar Name
  */
-func (parser *Parser) scalarTypeDefinition() (*ScalarTypeDefinition, error) {
-	node := &ScalarTypeDefinition{}
+func (parser *Parser) scalarTypeDefinition(description string) (*ScalarTypeDefinition, error) {
+	node := &ScalarTypeDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err := parser.matchName("scalar")
 	if err != nil {
@@ -1299,8 +1322,10 @@ func (parser *Parser) scalarTypeDefinition() (*ScalarTypeDefinition, error) {
 /**
  * EnumTypeDefinition : enum Name { EnumValueDefinition+ }
  */
-func (parser *Parser) enumTypeDefinition() (*EnumTypeDefinition, error) {
-	node := &EnumTypeDefinition{}
+func (parser *Parser) enumTypeDefinition(description string) (*EnumTypeDefinition, error) {
+	node := &EnumTypeDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err := parser.matchName("enum")
 	if err != nil {
@@ -1360,8 +1385,10 @@ func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
 /**
  * InputObjectTypeDefinition : input Name { InputValueDefinition+ }
  */
-func (parser *Parser) inputObjectTypeDefinition() (*InputObjectTypeDefinition, error) {
-	node := &InputObjectTypeDefinition{}
+func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjectTypeDefinition, error) {
+	node := &InputObjectTypeDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err := parser.matchName("input")
 	if err != nil {
@@ -1393,14 +1420,16 @@ func (parser *Parser) inputObjectTypeDefinition() (*InputObjectTypeDefinition, e
 /**
  * TypeExtensionDefinition : extend ObjectTypeDefinition
  */
-func (parser *Parser) typeExtensionDefinition() (*TypeExtensionDefinition, error) {
-	node := &TypeExtensionDefinition{}
+func (parser *Parser) typeExtensionDefinition(description string) (*TypeExtensionDefinition, error) {
+	node := &TypeExtensionDefinition{
+		Description: description,
+	}
 	start := parser.lookahead.Start
 	err := parser.matchName("extend")
 	if err != nil {
 		return nil, err
 	}
-	node.Definition, err = parser.objectTypeDefinition()
+	node.Definition, err = parser.objectTypeDefinition(description)
 	if err != nil {
 		return nil, err
 	}

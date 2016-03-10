@@ -27,6 +27,8 @@ const (
 	LINE_TERMINATOR
 
 	COMMENT
+	DESCRIPTION
+	DEPRECATION
 	COMMA
 
 	// Punctuators
@@ -51,7 +53,6 @@ const (
 	BOOL   // true, false
 	NULL   // null
 
-	DESCRIPTION
 )
 
 func (tokenType TokenType) String() string {
@@ -68,6 +69,10 @@ func (tokenType TokenType) String() string {
 		return "LineTerminator"
 	case COMMENT:
 		return "Comment"
+	case DESCRIPTION:
+		return "Description"
+	case DEPRECATION:
+		return "Deprecation"
 	case BANG:
 		return "!"
 	case DOLLAR:
@@ -408,11 +413,20 @@ func LexNumber(lexer *Lexer) StateFn {
 }
 
 func LexComment(lexer *Lexer) StateFn {
+	isDescription := false
+	if lexer.AcceptString("##") {
+		isDescription = true
+	}
 	for {
 		switch rn := lexer.Next(); rn {
 		case -1, '\u000A', '\u000D':
 			if rn == '\u000D' && lexer.Peek() == '\u000A' {
 				lexer.Next()
+			}
+			if isDescription {
+				lexer.Emit(DESCRIPTION)
+			} else {
+				lexer.Ignore()
 			}
 			lexer.Line += 1
 			lexer.Column = 1

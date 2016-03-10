@@ -1,6 +1,7 @@
 package graphql
 
 import (
+	"fmt"
 	. "github.com/playlyfe/go-graphql/language"
 )
 
@@ -157,6 +158,8 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 		case *EnumTypeDefinition:
 			typeInfo["kind"] = "ENUM"
 			typeInfo["description"] = __type.Description
+		default:
+			panic(fmt.Sprintf("Unknown Type %s", ttype))
 		}
 		return typeInfo
 	default:
