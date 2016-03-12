@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	. "github.com/playlyfe/go-graphql/language"
 	. "github.com/smartystreets/goconvey/convey"
 	"testing"
 )
@@ -45,6 +46,22 @@ type Article struct {
 
 type NumberHolder struct {
 	TheNumber int32 `json:"theNumber"`
+}
+
+type Cat struct {
+	Name  string `json:"name"`
+	Meows bool   `json:"meows"`
+}
+
+type Dog struct {
+	Name  string `json:"name"`
+	Barks bool   `json:"barks"`
+}
+
+type Person struct {
+	Name    string        `json:"name"`
+	Pets    []interface{} `json:"pets"`
+	Friends []interface{} `json:"friends"`
 }
 
 type Root struct {
@@ -1311,6 +1328,623 @@ func TestExecutor(t *testing.T) {
 	})
 
 	Convey("Execute: Union and intersection types", t, func() {
+		schema := `
+        interface Named {
+            name: String
+        }
+
+        type Dog implements Named {
+            name: String
+            barks: Boolean
+        }
+
+        type Cat implements Named {
+            name: String
+            meows: Boolean
+        }
+
+        union Pet = Dog | Cat
+
+        type Person implements Named {
+            name: String
+            pets: [Pet]
+            friends: [Named]
+        }
+        `
+
+		garfield := &Cat{
+			Name:  "Garfield",
+			Meows: false,
+		}
+		odie := &Dog{
+			Name:  "Odie",
+			Barks: true,
+		}
+		liz := &Person{
+			Name: "Liz",
+		}
+		john := &Person{
+			Name:    "John",
+			Pets:    []interface{}{garfield, odie},
+			Friends: []interface{}{liz, odie},
+		}
+		resolvers := map[string]interface{}{}
+		resolvers["Person/name"] = func(params *ResolveParams) (interface{}, error) {
+			if person, ok := params.Source.(*Person); ok {
+				return person.Name, nil
+			} else {
+				return john.Name, nil
+			}
+		}
+		resolvers["Person/pets"] = func(params *ResolveParams) (interface{}, error) {
+			if person, ok := params.Source.(*Person); ok {
+				return person.Pets, nil
+			} else {
+				return john.Pets, nil
+			}
+		}
+		resolvers["Person/friends"] = func(params *ResolveParams) (interface{}, error) {
+			if person, ok := params.Source.(*Person); ok {
+				return person.Friends, nil
+			} else {
+				return john.Friends, nil
+			}
+		}
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{}
+		executor, err := NewExecutor(schema, "Person", "", resolvers)
+		So(err, ShouldEqual, nil)
+		executor.ResolveType = func(value interface{}) string {
+			switch value.(type) {
+			case *Cat:
+				return "Cat"
+			case *Dog:
+				return "Dog"
+			case *Person:
+				return "Person"
+			}
+			return ""
+		}
+
+		Convey("can introspect on union and intersection types", func() {
+			input := `
+            {
+                Named: __type(name: "Named") {
+                    kind
+                    name
+                    fields { name }
+                    interfaces { name }
+                    possibleTypes { name }
+                    enumValues { name }
+                    inputFields { name }
+                }
+                Pet: __type(name: "Pet") {
+                    kind
+                    name
+                    fields { name }
+                    interfaces { name }
+                    possibleTypes { name }
+                    enumValues { name }
+                    inputFields { name }
+                }
+            }
+            `
+
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"Named": map[string]interface{}{
+						"kind": "INTERFACE",
+						"name": "Named",
+						"fields": []interface{}{
+							map[string]interface{}{
+								"name": "name",
+							},
+						},
+						"interfaces": nil,
+						"possibleTypes": []interface{}{
+							map[string]interface{}{"name": "Dog"},
+							map[string]interface{}{"name": "Cat"},
+							map[string]interface{}{"name": "Person"},
+						},
+						"enumValues":  nil,
+						"inputFields": nil,
+					},
+					"Pet": map[string]interface{}{
+						"kind":       "UNION",
+						"name":       "Pet",
+						"fields":     nil,
+						"interfaces": nil,
+						"possibleTypes": []interface{}{
+							map[string]interface{}{"name": "Dog"},
+							map[string]interface{}{"name": "Cat"},
+						},
+						"enumValues":  nil,
+						"inputFields": nil,
+					},
+				},
+			})
+		})
+
+		Convey("executes using union types", func() {
+			// NOTE: This is an *invalid* query, but it should be an *executable* query.
+
+			input := `
+            {
+                __typename
+                name
+                pets {
+                    __typename
+                    name
+                    barks
+                    meows
+                }
+            }
+            `
+
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"__typename": "Person",
+					"name":       "John",
+					"pets": []interface{}{
+						map[string]interface{}{
+							"__typename": "Cat",
+							"name":       "Garfield",
+							"meows":      false,
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+				},
+			})
+		})
+
+		Convey("executes union types with inline fragments", func() {
+			input := `
+            {
+                __typename
+                name
+                pets {
+                    __typename
+                    ... on Dog {
+                        name
+                        barks
+                    }
+                    ... on Cat {
+                        name
+                        meows
+                    }
+                }
+            }
+            `
+
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"__typename": "Person",
+					"name":       "John",
+					"pets": []interface{}{
+						map[string]interface{}{
+							"__typename": "Cat",
+							"name":       "Garfield",
+							"meows":      false,
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+				},
+			})
+
+			input = `
+            {
+                __typename
+                name
+                friends {
+                    __typename
+                    name
+                    ... on Dog {
+                        barks
+                    }
+                    ... on Cat {
+                        meows
+                    }
+                }
+            }
+            `
+
+			result, err = executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"__typename": "Person",
+					"name":       "John",
+					"friends": []interface{}{
+						map[string]interface{}{
+							"__typename": "Person",
+							"name":       "Liz",
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+				},
+			})
+		})
+
+		Convey("executes using interface types", func() {
+
+			// NOTE: This is an *invalid* query, but it should be an *executable* query
+			input := `
+            {
+                __typename
+                name
+                friends {
+                    __typename
+                    name
+                    barks
+                    meows
+                }
+            }
+            `
+
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"__typename": "Person",
+					"name":       "John",
+					"friends": []interface{}{
+						map[string]interface{}{
+							"__typename": "Person",
+							"name":       "Liz",
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+				},
+			})
+		})
+
+		Convey("allows fragment conditions to be abstract types", func() {
+			input := `
+            {
+                __typename
+                name
+                pets { ...PetFields }
+                friends { ...FriendFields }
+            }
+
+            fragment PetFields on Pet {
+                __typename
+                ... on Dog {
+                    name
+                    barks
+                }
+                ... on Cat {
+                    name
+                    meows
+                }
+            }
+            fragment FriendFields on Named {
+                __typename
+                name
+                ... on Dog {
+                    barks
+                }
+                ... on Cat {
+                    meows
+                }
+            }
+            `
+
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"__typename": "Person",
+					"name":       "John",
+					"pets": []interface{}{
+						map[string]interface{}{
+							"__typename": "Cat",
+							"name":       "Garfield",
+							"meows":      false,
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+					"friends": []interface{}{
+						map[string]interface{}{
+							"__typename": "Person",
+							"name":       "Liz",
+						},
+						map[string]interface{}{
+							"__typename": "Dog",
+							"name":       "Odie",
+							"barks":      true,
+						},
+					},
+				},
+			})
+		})
+	})
+
+	Convey("Execute: Handles inputs", t, func() {
+
+		schema := `
+        scalar ComplexScalar
+
+        input TestInputObject {
+            a: String
+            b: [String]
+            c: String!
+            d: ComplexScalar
+        }
+
+        input TestNestedInputObject {
+            na: TestInputObject!
+            nb: String!
+        }
+
+        type TestType {
+            fieldWithObjectInput(input: TestInputObject): String
+            fieldWithNullableStringInput(input: String): String
+            fieldWithNonNullableStringInput(input: String!): String
+            fieldWithDefaultArgumentValue(input: String = "Hello World"): String
+            fieldWithNestedInputObject(input: TestNestedInputObject = "Hello World"): String
+            list(input: [String]): String
+            nnList(input: [String]!): String
+            listNN(input: [String!]): String
+            nnlistNN(input: [String!]!): String
+        }
+        `
+		resolvers := map[string]interface{}{}
+		fieldResolver := func(params *ResolveParams) (interface{}, error) {
+			if input, ok := params.Args["input"]; ok {
+				result, err := json.Marshal(input)
+				if err != nil {
+					return nil, err
+				}
+				return string(result), nil
+			}
+			return nil, nil
+		}
+		resolvers["TestType/fieldWithObjectInput"] = fieldResolver
+		resolvers["TestType/fieldWithNullableStringInput"] = fieldResolver
+		resolvers["TestType/fieldWithNonNullableStringInput"] = fieldResolver
+		resolvers["TestType/fieldWithDefaultArgumentValue"] = fieldResolver
+		resolvers["TestType/fieldWithNestedInputObject"] = fieldResolver
+		resolvers["TestType/list"] = fieldResolver
+		resolvers["TestType/nnList"] = fieldResolver
+		resolvers["TestType/listNN"] = fieldResolver
+		resolvers["TestType/nnlistNN"] = fieldResolver
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{}
+		executor, err := NewExecutor(schema, "TestType", "", resolvers)
+		So(err, ShouldEqual, nil)
+		executor.Scalars["ComplexScalar"] = &Scalar{
+			ParseValue: func(value interface{}) (interface{}, error) {
+				if val, ok := value.(string); ok {
+					if val == "SerializedValue" {
+						return "DeserializedValue", nil
+					}
+				}
+				return nil, &GraphQLError{
+					Message: "Failed to parse ComplexScalar value",
+				}
+			},
+			ParseLiteral: func(value interface{}) (interface{}, error) {
+				if ast, ok := value.(*String); ok {
+					if ast.Value == "SerializedValue" {
+						return "DeserializedValue", nil
+					}
+				}
+				return nil, &GraphQLError{
+					Message: "Failed to parse ComplexScalar value",
+				}
+			},
+			Serialize: func(value interface{}) (interface{}, error) {
+				if val, ok := value.(string); ok {
+					if val == "DeserializedValue" {
+						return "SerializedValue", nil
+					}
+				}
+				return nil, &GraphQLError{
+					Message: "Failed to serialize ComplexScalar value",
+				}
+			},
+		}
+
+		Convey("Handles objects and nullability", func() {
+
+			Convey("using inline structs", func() {
+
+				Convey("executes with complex input", func() {
+					input := `
+                    {
+                        fieldWithObjectInput(input: {a: "foo", b: ["bar"], c:"baz"})
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","b":["bar"],"c":"baz"}`,
+						},
+					})
+				})
+
+				Convey("properly parses single value to list", func() {
+					input := `
+                    {
+                        fieldWithObjectInput(input: {a: "foo", b: "bar", c:"baz"})
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","b":["bar"],"c":"baz"}`,
+						},
+					})
+				})
+
+				Convey("does not use incorrect value", func() {
+					input := `
+                    {
+                        fieldWithObjectInput(input: ["foo", "bar", "baz"])
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": nil,
+						},
+					})
+				})
+
+				Convey("properly runs parseLiteral on complex scalar types", func() {
+					input := `
+                    {
+                        fieldWithObjectInput(input: {a: "foo", d: "SerializedValue"})
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","d":"DeserializedValue"}`,
+						},
+					})
+				})
+			})
+
+			Convey("using variables", func() {
+				input := `
+                query q($input: TestInputObject) {
+                    fieldWithObjectInput(input: $input)
+                }
+                `
+
+				Convey("executes with complex input", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"a": "foo",
+							"b": []interface{}{"bar"},
+							"c": "baz",
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","b":["bar"],"c":"baz"}`,
+						},
+					})
+				})
+
+				Convey("uses default value when not provided", func() {
+					input = `
+                    query q($input: TestInputObject = {a: "foo", b: ["bar"], c: "baz"}) {
+                        fieldWithObjectInput(input: $input)
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","b":["bar"],"c":"baz"}`,
+						},
+					})
+
+				})
+
+				Convey("properly parses single value to list", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"a": "foo",
+							"b": "bar",
+							"c": "baz",
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"a":"foo","b":["bar"],"c":"baz"}`,
+						},
+					})
+				})
+
+				Convey("executes with complex scalar input", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"c": "foo",
+							"d": "SerializedValue",
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"c":"foo","d":"DeserializedValue"}`,
+						},
+					})
+				})
+
+				Convey("errors on null for nested non-null", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"a": "foo",
+							"b": "bar",
+							"c": nil,
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": `{"c":"foo","d":"DeserializedValue"}`,
+						},
+					})
+				})
+
+			})
+
+		})
+		Convey("Handles nullable scalars", func() {
+
+		})
+
+		Convey("Handles non-nullable scalars", func() {
+
+		})
+
+		Convey("Handles lists and nullability", func() {
+
+		})
+
+		Convey("Execute: Uses argument default values", func() {
+
+		})
 
 	})
 

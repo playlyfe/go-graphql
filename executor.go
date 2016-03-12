@@ -41,120 +41,27 @@ type FieldParams struct {
 	After   func(params *ResolveParams) error
 }
 
+type Scalar struct {
+	ParseLiteral func(value interface{}) (interface{}, error)
+	ParseValue   func(value interface{}) (interface{}, error)
+	Serialize    func(value interface{}) (interface{}, error)
+}
+
 type Executor struct {
 	ResolveType  func(value interface{}) string
 	IsNullish    func(value interface{}) bool
 	Schema       *Schema
 	Resolvers    map[string]interface{}
+	Scalars      map[string]*Scalar
 	ErrorHandler func(err *Error) map[string]interface{}
 }
-
-/*func (executor *Executor) buildValue(node ASTNode, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) interface{} {
-	switch value := node.(type) {
-	case *Int:
-		return value.Value
-	case *Float:
-		return value.Value
-	case *String:
-		return value.Value
-	case *Boolean:
-		return value.Value
-	case *Enum:
-		return value.Value
-	case *Object:
-		result := map[string]interface{}{}
-		for _, field := range value.Fields {
-			result[field.Name.Value] = BuildValue(field.Value, variables, variableDefinitionIndex)
-		}
-		return result
-	case *List:
-		result := []interface{}{}
-		for _, item := range value.Values {
-			result = append(result, BuildValue(item, variables, variableDefinitionIndex))
-		}
-		return result
-	case *Variable:
-		if vdef, ok := variableDefinitionIndex[value.Name.Value]; ok {
-			ttype := vdef.Type
-			if vtype, ok := vdef.Type.(*NonNullType); ok {
-				ttype = vtype.Type
-			}
-			if result, ok := variables[value.Name.Value]; ok {
-				switch ttype.(*NamedType).Name.Value {
-				case "Int":
-					val, ok := utils.CoerceInt(result)
-					if ok {
-						return val
-					} else {
-						return nil
-					}
-				case "Float":
-					val, ok := utils.CoerceFloat(result)
-					if ok {
-						return val
-					} else {
-						return nil
-					}
-				case "String", "ID":
-					val, ok := utils.CoerceString(result)
-					if ok {
-						return val
-					} else {
-						return nil
-					}
-				case "Boolean":
-					val, ok := utils.CoerceBoolean(result)
-					if ok {
-						return val
-					} else {
-						return nil
-					}
-				default:
-					println("---------\n", ttype.(*NamedType).Name.Value)
-					return nil
-				}
-			} else {
-				return nil
-			}
-		} else {
-			return nil
-		}
-	default:
-		return nil
-	}
-}*/
-
-/*func (executor *Executor) buildArguments(argumentIndex map[string]*InputValueDefinition, arguments []*Argument, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) map[string]interface{} {
-	result := map[string]interface{}{}
-	for _, argument := range arguments {
-		value := BuildValue(argument.Value, variables, variableDefinitionIndex)
-		defaultValue := argumentIndex[argument.Name.Value].DefaultValue
-		if value == nil && defaultValue != nil {
-			value = BuildValue(defaultValue, variables, variableDefinitionIndex)
-		}
-		if value != nil {
-			result[argument.Name.Value] = value
-		}
-	}
-	for _, argumentDefinition := range argumentIndex {
-		if _, ok := result[argumentDefinition.Name.Value]; !ok && argumentDefinition.DefaultValue != nil {
-			defaultValue := BuildValue(argumentIndex[argumentDefinition.Name.Value].DefaultValue, variables, variableDefinitionIndex)
-			if defaultValue != nil {
-				result[argumentDefinition.Name.Value] = defaultValue
-			}
-		}
-	}
-	println("ARGS")
-	utils.PrintJSON(result)
-	return result
-}*/
 
 /**
  * Prepares an object map of variableValues of the correct type based on the
  * provided variable definitions and arbitrary input. If the input cannot be
  * parsed to match the variable definitions, a GraphQLError will be thrown.
  */
-func (executor *Executor) variableValues(definitionASTs []*VariableDefinition, inputs map[string]interface{}) (map[string]interface{}, error) {
+/*func (executor *Executor) variableValues(definitionASTs []*VariableDefinition, inputs map[string]interface{}) (map[string]interface{}, error) {
 	values := map[string]interface{}{}
 	for _, definitionAST := range definitionASTs {
 		varName := definitionAST.Variable.Name.Value
@@ -165,7 +72,7 @@ func (executor *Executor) variableValues(definitionASTs []*VariableDefinition, i
 		values[varName] = varValue
 	}
 	return values, nil
-}
+}*/
 
 /**
  * Prepares an object map of argument values given a list of argument
@@ -205,9 +112,16 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 	}
 	if ttype, ok := ntype.(*ListType); ok {
 		result := []interface{}{}
-		list := input.([]interface{})
-		for _, item := range list {
-			value, err := executor.variableValue(ttype.Type, item)
+		if list, ok := input.([]interface{}); ok {
+			for _, item := range list {
+				value, err := executor.variableValue(ttype.Type, item)
+				if err != nil {
+					return nil, err
+				}
+				result = append(result, value)
+			}
+		} else {
+			value, err := executor.variableValue(ttype.Type, input)
 			if err != nil {
 				return nil, err
 			}
@@ -285,8 +199,18 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 				return result, nil
 			}
 
-			if _, ok := ttype.(*ScalarTypeDefinition); ok {
+			if scalar, ok := ttype.(*ScalarTypeDefinition); ok {
 				// TODO: Handle coercing of value for custom scalars!
+				if parser, ok := executor.Scalars[scalar.Name.Value]; ok {
+					result, err := parser.ParseValue(input)
+					if err != nil {
+						return nil, err
+					}
+					return result, nil
+				}
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
+				}
 			}
 		}
 	}
@@ -314,9 +238,15 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 		}
 		value, ok := variables[variableName]
 		if !ok {
-			return nil, &GraphQLError{
-				Message: "Variable not found",
+			field := variableDefinitionIndex[variableName]
+			if field.DefaultValue != nil {
+				variableValue, err := executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				return variableValue, nil
 			}
+			return nil, nil
 		}
 		// Note: we're not doing any checking that this variable is correct. We're
 		// assuming that this query has been validated and the variable usage here
@@ -336,9 +266,14 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			}
 			return result, nil
 		} else {
-			return nil, &GraphQLError{
-				Message: "Expected a list",
+			itemValue, err := executor.valueFromAST(valueAST, itemType, variables, variableDefinitionIndex)
+			if err != nil {
+				return nil, err
 			}
+			return []interface{}{itemValue}, nil
+			/*return nil, &GraphQLError{
+							Message: "Epected a list",
+			            }*/
 		}
 	}
 	if vtype, ok := ntype.(*NamedType); ok {
@@ -361,6 +296,11 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			}
 		default:
 			ttype := executor.Schema.Document.TypeIndex[typeName]
+			if ttype == nil {
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Type %s not defined", typeName),
+				}
+			}
 			if inputType, ok := ttype.(*InputObjectTypeDefinition); ok {
 				fields := inputType.Fields
 				if object, ok := valueAST.(*Object); ok {
@@ -368,12 +308,16 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 					result := map[string]interface{}{}
 					for _, field := range fields {
 						var fieldAST *ObjectField
+						var fieldValue interface{}
+						var err error
 						if v, ok := fieldASTs[field.Name.Value]; ok {
 							fieldAST = v
 						}
-						fieldValue, err := executor.valueFromAST(fieldAST, field.Type, variables, variableDefinitionIndex)
-						if err != nil {
-							return nil, err
+						if fieldAST != nil {
+							fieldValue, err = executor.valueFromAST(fieldAST.Value, field.Type, variables, variableDefinitionIndex)
+							if err != nil {
+								return nil, err
+							}
 						}
 						if executor.IsNullish(fieldValue) {
 							fieldValue, err = executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
@@ -393,15 +337,26 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 					return val.Value, nil
 				}
 			}
-			if _, ok := ttype.(*ScalarTypeDefinition); ok {
+			if scalar, ok := ttype.(*ScalarTypeDefinition); ok {
 				// TODO: Handle parsing of AST for custom scalars!
+				if scalarParser, ok := executor.Scalars[scalar.Name.Value]; ok {
+					result, err := scalarParser.ParseLiteral(valueAST)
+					if err != nil {
+						return nil, err
+					}
+					return result, nil
+				}
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
+				}
 			}
 		}
 
 	}
-	return nil, &GraphQLError{
-		Message: "Unknown AST value type",
-	}
+	/*return nil, &GraphQLError{
+		Message: fmt.Sprintf("Unknown AST value type: %#v", ntype.(*NamedType).Name.Value),
+	}*/
+	return nil, nil
 }
 
 func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string, resolvers map[string]interface{}) (*Executor, error) {
@@ -416,6 +371,7 @@ func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string,
 	return &Executor{
 		Schema:    schema,
 		Resolvers: resolvers,
+		Scalars:   map[string]*Scalar{},
 		IsNullish: func(value interface{}) bool {
 			if value, ok := value.(string); ok {
 				return value == ""
@@ -719,7 +675,6 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 					}
 				}
 			}
-
 			if !executor.doesFragmentTypeApply(objectType, fragment.TypeCondition) {
 				continue
 			}
@@ -775,6 +730,8 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 				}
 				groupedFields[responseKey] = append(groupForResponseKey, fragmentGroup...)
 			}
+		default:
+			panic("Unknown selection type")
 		}
 	}
 	return groupedFields, nil
@@ -899,12 +856,13 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 	}
 
 	if listType, ok := fieldType.(*ListType); ok {
+		innerType := listType.Type
 		if resultVal.Type().Kind() != reflect.Slice {
 			return nil, &GraphQLError{
 				Message: "Expected a list but did not find one",
+				Field:   field,
 			}
 		}
-		innerType := listType.Type
 		completedResults := []interface{}{}
 		for index := 0; index < resultVal.Len(); index++ {
 			val := resultVal.Index(index).Interface()
@@ -980,6 +938,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 
 		return nil, &GraphQLError{
 			Message: "Unknown type " + typeName,
+			Field:   field,
 		}
 	}
 	return nil, nil

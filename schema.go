@@ -167,14 +167,34 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 	}
 }
 
+func typenameResolver(typename string) func(params *ResolveParams) (interface{}, error) {
+	return func(params *ResolveParams) (interface{}, error) {
+		return typename, nil
+	}
+}
+
 func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (*Schema, map[string]interface{}, error) {
 	parser := &Parser{}
 	schema := &Schema{}
+	resolvers := map[string]interface{}{}
 	ast, err := parser.Parse(&ParseParams{
 		Source: schemaDefinition + INTROSPECTION_SCHEMA,
 	})
 	if err != nil {
 		return nil, nil, err
+	}
+	typenameField := &FieldDefinition{
+		Name: &Name{
+			Value: "__typename",
+		},
+		Description: "The GraphQL type name",
+		Type: &NonNullType{
+			Type: &NamedType{
+				Name: &Name{
+					Value: "String",
+				},
+			},
+		},
 	}
 	for _, definition := range ast.Definitions {
 		switch operationDefinition := definition.(type) {
@@ -184,6 +204,9 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 			} else if operationDefinition.Name.Value == mutationRoot {
 				schema.MutationRoot = operationDefinition
 			}
+			operationDefinition.Fields = append(operationDefinition.Fields, typenameField)
+			operationDefinition.FieldIndex["__typename"] = typenameField
+			resolvers[operationDefinition.Name.Value+"/__typename"] = typenameResolver(operationDefinition.Name.Value)
 		}
 	}
 	if schema.QueryRoot == nil {
@@ -246,7 +269,6 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	schema.QueryRoot.Fields = append(schema.QueryRoot.Fields, schemaField)
 	schema.QueryRoot.FieldIndex["__type"] = typeField
 	schema.QueryRoot.Fields = append(schema.QueryRoot.Fields, typeField)
-	resolvers := map[string]interface{}{}
 	resolvers[queryRoot+"/__schema"] = func(params *ResolveParams) (interface{}, error) {
 		executor := params.Executor
 		return map[string]interface{}{
