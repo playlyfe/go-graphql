@@ -598,15 +598,30 @@ func (executor *Executor) PrintSchema() string {
 
 func (executor *Executor) Execute(context interface{}, request string, variables map[string]interface{}, operationName string) (map[string]interface{}, error) {
 	parser := &Parser{}
+	result := map[string]interface{}{}
 
 	document, err := parser.Parse(&ParseParams{
 		Source: request,
 	})
 	if err != nil {
-		return nil, err
+		if gqlErr, ok := err.(*GraphQLError); ok {
+			result["errors"] = []map[string]interface{}{
+				{
+					"message": gqlErr.Message,
+					"locations": []map[string]interface{}{
+						{
+							"line":   gqlErr.Start.Line,
+							"column": gqlErr.Start.Column,
+						},
+					},
+				},
+			}
+			return result, nil
+		} else {
+			return nil, err
+		}
 	}
 
-	result := map[string]interface{}{}
 	reqCtx := &RequestContext{
 		AppContext: context,
 		Document:   document,
