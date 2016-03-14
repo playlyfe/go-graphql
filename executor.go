@@ -74,6 +74,28 @@ type Executor struct {
 	return values, nil
 }*/
 
+func (executor *Executor) resolveNamedType(ntype ASTNode) *NamedType {
+	unmodifiedType := ntype
+	for {
+		if untype, ok := unmodifiedType.(*NonNullType); ok {
+			unmodifiedType = untype.Type
+		} else if untype, ok := unmodifiedType.(*ListType); ok {
+			unmodifiedType = untype.Type
+		} else {
+			return unmodifiedType.(*NamedType)
+		}
+	}
+	return nil
+}
+
+// TODO: Implement type printer
+/*func PrintType (ntype ASTNode) string {
+    output := ""
+
+
+    }
+}*/
+
 /**
  * Prepares an object map of argument values given a list of argument
  * definitions and list of argument AST nodes.
@@ -104,18 +126,37 @@ func (executor *Executor) argumentValues(argDefs map[string]*InputValueDefinitio
 }
 
 func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (interface{}, error) {
+	if ttype, ok := ntype.(*NonNullType); ok {
+		value, err := executor.variableValue(ttype.Type, input)
+		if err != nil {
+			return nil, err
+		}
+		if executor.IsNullish(value) {
+			if namedType, ok := ttype.Type.(*NamedType); ok {
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Expected \"%s!\", found null", namedType.Name.Value),
+				}
+			}
+			return nil, &GraphQLError{
+				Message: "Expected non-null value, found null",
+			}
+		}
+		return value, nil
+	}
 	if input == nil {
 		return nil, nil
-	}
-	if ttype, ok := ntype.(*NonNullType); ok {
-		return executor.variableValue(ttype.Type, input)
 	}
 	if ttype, ok := ntype.(*ListType); ok {
 		result := []interface{}{}
 		if list, ok := input.([]interface{}); ok {
-			for _, item := range list {
+			for index, item := range list {
 				value, err := executor.variableValue(ttype.Type, item)
 				if err != nil {
+					if gqlErr, ok := err.(*GraphQLError); ok {
+						return nil, &GraphQLError{
+							Message: fmt.Sprintf("In element #%d: %s", index, gqlErr.Message),
+						}
+					}
 					return nil, err
 				}
 				result = append(result, value)
@@ -173,6 +214,11 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 						if fieldValue, ok := object[field.Name.Value]; ok {
 							fieldValue, err := executor.variableValue(field.Type, fieldValue)
 							if err != nil {
+								if gqlErr, ok := err.(*GraphQLError); ok {
+									return nil, &GraphQLError{
+										Message: fmt.Sprintf("In field %q: %s", field.Name.Value, gqlErr.Message),
+									}
+								}
 								return nil, err
 							}
 							if executor.IsNullish(fieldValue) {
@@ -184,9 +230,30 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 							if !executor.IsNullish(fieldValue) {
 								result[field.Name.Value] = fieldValue
 							}
+							delete(object, field.Name.Value)
+						} else {
+							// We ensure that the missing value is nullable
+							_, err := executor.variableValue(field.Type, nil)
+							if err != nil {
+								if gqlErr, ok := err.(*GraphQLError); ok {
+									return nil, &GraphQLError{
+										Message: fmt.Sprintf("In field %q: %s", field.Name.Value, gqlErr.Message),
+									}
+								}
+								return nil, err
+							}
+						}
+					}
+					for key, _ := range object {
+						return nil, &GraphQLError{
+							Message: fmt.Sprintf("In field %q: Unknown field", key),
 						}
 					}
 					return result, nil
+				} else {
+					return nil, &GraphQLError{
+						Message: fmt.Sprintf("Expected %q, found not an object", typeName),
+					}
 				}
 			}
 			if _, ok := ttype.(*EnumTypeDefinition); ok {
@@ -211,6 +278,10 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 				return nil, &GraphQLError{
 					Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
 				}
+			}
+
+			return nil, &GraphQLError{
+				Message: "Must be input type",
 			}
 		}
 	}
@@ -237,21 +308,54 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			}
 		}
 		value, ok := variables[variableName]
-		if !ok {
-			field := variableDefinitionIndex[variableName]
-			if field.DefaultValue != nil {
-				variableValue, err := executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
-				if err != nil {
-					return nil, err
+		field := variableDefinitionIndex[variableName]
+		if field != nil {
+			namedType := executor.resolveNamedType(field.Type)
+			variableType := executor.Schema.Document.TypeIndex[namedType.Name.Value]
+			_, isInputType := variableType.(*InputObjectTypeDefinition)
+			_, isScalar := variableType.(*ScalarTypeDefinition)
+			_, isEnum := variableType.(*EnumTypeDefinition)
+			if !isInputType && !isScalar && !isEnum {
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Variable \"$%s\" expected value of type \"%s\" which cannot be used as an input type", variableName, namedType.Name.Value),
 				}
-				return variableValue, nil
+			}
+		}
+
+		if !ok {
+			if field != nil {
+				if field.DefaultValue != nil {
+					variableValue, err := executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
+					if err != nil {
+						return nil, err
+					}
+					return variableValue, nil
+				}
+				if nntype, ok := field.Type.(*NonNullType); ok {
+					namedType := executor.resolveNamedType(nntype.Type)
+					return nil, &GraphQLError{
+						Message: fmt.Sprintf("Variable \"$%s\" of required type \"%s!\" was not provided", variableName, namedType.Name.Value),
+					}
+				}
 			}
 			return nil, nil
 		}
-		// Note: we're not doing any checking that this variable is correct. We're
-		// assuming that this query has been validated and the variable usage here
-		// is of the correct type.
-		return executor.variableValue(variableDefinitionIndex[variableName].Type, value)
+		if nntype, ok := field.Type.(*NonNullType); ok && value == nil {
+			namedType := executor.resolveNamedType(nntype.Type)
+			return nil, &GraphQLError{
+				Message: fmt.Sprintf("Variable \"$%s\" of required type \"%s!\" was not provided", variableName, namedType.Name.Value),
+			}
+		}
+
+		result, err := executor.variableValue(variableDefinitionIndex[variableName].Type, value)
+		if err != nil {
+			if gqlErr, ok := err.(*GraphQLError); ok {
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Variable \"$%s\" got invalid value \n%s", variableName, gqlErr.Message),
+				}
+			}
+		}
+		return result, nil
 	}
 	if ttype, ok := ntype.(*ListType); ok {
 		itemType := ttype.Type
@@ -912,6 +1016,22 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 				return nil, nil
 			}
 		}
+		if scalar, ok := executor.Schema.Document.ScalarTypeIndex[typeName]; ok {
+			parser, ok := executor.Scalars[typeName]
+			if ok {
+				val, err := parser.Serialize(result)
+				if err != nil {
+					return nil, err
+				} else {
+					return val, nil
+				}
+			} else {
+				return nil, &GraphQLError{
+					Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
+				}
+			}
+		}
+
 		if objectType, ok := executor.Schema.Document.ObjectTypeIndex[typeName]; ok {
 			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
 		}

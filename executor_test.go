@@ -1708,11 +1708,12 @@ func TestExecutor(t *testing.T) {
             fieldWithNullableStringInput(input: String): String
             fieldWithNonNullableStringInput(input: String!): String
             fieldWithDefaultArgumentValue(input: String = "Hello World"): String
-            fieldWithNestedInputObject(input: TestNestedInputObject = "Hello World"): String
+            fieldWithNestedObjectInput(input: TestNestedInputObject = "Hello World"): String
             list(input: [String]): String
             nnList(input: [String]!): String
             listNN(input: [String!]): String
             nnlistNN(input: [String!]!): String
+            deserializedValue(input: ComplexScalar!): ComplexScalar
         }
         `
 		resolvers := map[string]interface{}{}
@@ -1730,11 +1731,14 @@ func TestExecutor(t *testing.T) {
 		resolvers["TestType/fieldWithNullableStringInput"] = fieldResolver
 		resolvers["TestType/fieldWithNonNullableStringInput"] = fieldResolver
 		resolvers["TestType/fieldWithDefaultArgumentValue"] = fieldResolver
-		resolvers["TestType/fieldWithNestedInputObject"] = fieldResolver
+		resolvers["TestType/fieldWithNestedObjectInput"] = fieldResolver
 		resolvers["TestType/list"] = fieldResolver
 		resolvers["TestType/nnList"] = fieldResolver
 		resolvers["TestType/listNN"] = fieldResolver
 		resolvers["TestType/nnlistNN"] = fieldResolver
+		resolvers["TestType/deserializedValue"] = func(params *ResolveParams) (interface{}, error) {
+			return params.Args["input"], nil
+		}
 		context := map[string]interface{}{}
 		variables := map[string]interface{}{}
 		executor, err := NewExecutor(schema, "TestType", "", resolvers)
@@ -1835,6 +1839,48 @@ func TestExecutor(t *testing.T) {
 						},
 					})
 				})
+
+				Convey("properly serializes scalar values", func() {
+					input := `
+                    {
+                        deserializedValue(input: "SerializedValue")
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"deserializedValue": "SerializedValue",
+						},
+					})
+				})
+
+				Convey("errors on bad serialization", func() {
+					input := `
+                    {
+                        deserializedValue(input: "BAD")
+                    }
+                    `
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"deserializedValue": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"message": "Failed to parse ComplexScalar value\n\n1|\n2|                    {\n3|                        deserializedValue(input: \"BAD\")\n                          ^^^^^^^^^^^^^^^^^\n4|                    }\n5|                    ",
+								"locations": []map[string]interface{}{
+									{
+										"column": 25,
+										"line":   3,
+									},
+								},
+							},
+						},
+					})
+				})
+
 			})
 
 			Convey("using variables", func() {
@@ -1852,7 +1898,7 @@ func TestExecutor(t *testing.T) {
 							"c": "baz",
 						},
 					}
-					result, err := executor.Execute(context, input, variables, "")
+					result, err := executor.Execute(context, input, variables, "q")
 					So(err, ShouldEqual, nil)
 					So(result, ShouldResemble, map[string]interface{}{
 						"data": map[string]interface{}{
@@ -1867,7 +1913,7 @@ func TestExecutor(t *testing.T) {
                         fieldWithObjectInput(input: $input)
                     }
                     `
-					result, err := executor.Execute(context, input, variables, "")
+					result, err := executor.Execute(context, input, variables, "q")
 					So(err, ShouldEqual, nil)
 					So(result, ShouldResemble, map[string]interface{}{
 						"data": map[string]interface{}{
@@ -1922,7 +1968,131 @@ func TestExecutor(t *testing.T) {
 					So(err, ShouldEqual, nil)
 					So(result, ShouldResemble, map[string]interface{}{
 						"data": map[string]interface{}{
-							"fieldWithObjectInput": `{"c":"foo","d":"DeserializedValue"}`,
+							"fieldWithObjectInput": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"locations": []map[string]interface{}{
+									{
+										"column": 21,
+										"line":   3,
+									},
+								},
+								"message": "Variable \"$input\" got invalid value \nIn field \"c\": Expected \"String!\", found null\n\n1|\n2|                query q($input: TestInputObject) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							},
+						},
+					})
+				})
+
+				Convey("errors on incorrect type", func() {
+					variables = map[string]interface{}{
+						"input": "foo bar",
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"locations": []map[string]interface{}{
+									{
+										"column": 21,
+										"line":   3,
+									},
+								},
+								"message": "Variable \"$input\" got invalid value \nExpected \"TestInputObject\", found not an object\n\n1|\n2|                query q($input: TestInputObject) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							},
+						},
+					})
+				})
+
+				Convey("errors on omission of nested non-null", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"a": "foo",
+							"b": "bar",
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"locations": []map[string]interface{}{
+									{
+										"column": 21,
+										"line":   3,
+									},
+								},
+								"message": "Variable \"$input\" got invalid value \nIn field \"c\": Expected \"String!\", found null\n\n1|\n2|                query q($input: TestInputObject) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							},
+						},
+					})
+				})
+
+				Convey("errors on deep nested errors with first error", func() {
+					input = `
+                    query q($input: TestNestedInputObject) {
+                        fieldWithNestedObjectInput(input: $input)
+                    }
+                    `
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"na": map[string]interface{}{
+								"a": "foo",
+							},
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "q")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithNestedObjectInput": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"locations": []map[string]interface{}{
+									{
+										"column": 25,
+										"line":   3,
+									},
+								},
+								"message": "Variable \"$input\" got invalid value \nIn field \"na\": In field \"c\": Expected \"String!\", found null\n\n1|\n2|                    query q($input: TestNestedInputObject) {\n3|                        fieldWithNestedObjectInput(input: $input)\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^\n4|                    }\n5|                    ",
+							},
+						},
+					})
+				})
+
+				Convey("errors on addition of unknown scalars", func() {
+					variables = map[string]interface{}{
+						"input": map[string]interface{}{
+							"a":     "foo",
+							"b":     "bar",
+							"c":     "baz",
+							"extra": "dog",
+						},
+					}
+					result, err := executor.Execute(context, input, variables, "")
+					So(err, ShouldEqual, nil)
+					So(result, ShouldResemble, map[string]interface{}{
+						"data": map[string]interface{}{
+							"fieldWithObjectInput": nil,
+						},
+						"errors": []map[string]interface{}{
+							{
+								"locations": []map[string]interface{}{
+									{
+										"column": 21,
+										"line":   3,
+									},
+								},
+								"message": "Variable \"$input\" got invalid value \nIn field \"extra\": Unknown field\n\n1|\n2|                query q($input: TestInputObject) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							},
 						},
 					})
 				})
@@ -1932,17 +2102,490 @@ func TestExecutor(t *testing.T) {
 		})
 		Convey("Handles nullable scalars", func() {
 
+			Convey("allows nullable inputs to be omitted", func() {
+				input := `
+                {
+                    fieldWithNullableStringInput
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": nil,
+					},
+				})
+			})
+
+			Convey("allows nullable inputs to be omitted in a variable", func() {
+				input := `
+                query SetsNullable($value: String) {
+                    fieldWithNullableStringInput(input: $value)
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": nil,
+					},
+				})
+			})
+
+			Convey("allows nullable inputs to be omitted in an unlisted variable", func() {
+				input := `
+                query SetsNullable {
+                    fieldWithNullableStringInput(input: $value)
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": nil,
+					},
+				})
+			})
+
+			Convey("allows nullable inputs to be set to null in a variable", func() {
+				input := `
+                query SetsNullable($value: String) {
+                    fieldWithNullableStringInput(input: $value)
+                }
+                `
+				variables = map[string]interface{}{
+					"value": nil,
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": nil,
+					},
+				})
+			})
+
+			Convey("allows nullable inputs to be set to a value in a variable", func() {
+				input := `
+                query SetsNullable($value: String) {
+                    fieldWithNullableStringInput(input: $value)
+                }
+                `
+				variables = map[string]interface{}{
+					"value": "a",
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": `"a"`,
+					},
+				})
+			})
+
+			Convey("allows nullable inputs to be set to a value directly", func() {
+				input := `
+                {
+                    fieldWithNullableStringInput(input: "a")
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNullableStringInput": `"a"`,
+					},
+				})
+			})
 		})
 
 		Convey("Handles non-nullable scalars", func() {
 
+			Convey("does not allow non-nullable inputs to be omitted in a variable", func() {
+				input := `
+                query SetsNonNullable($value: String!) {
+                    fieldWithNonNullableStringInput(input: $value)
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNonNullableStringInput": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$value\" of required type \"String!\" was not provided\n\n1|\n2|                query SetsNonNullable($value: String!) {\n3|                    fieldWithNonNullableStringInput(input: $value)\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"column": 21,
+									"line":   3,
+								},
+							},
+						},
+					},
+				})
+			})
+
+			Convey("does not allow non-nullable inputs to be set to null in a variable", func() {
+				input := `
+                query SetsNonNullable($value: String!) {
+                    fieldWithNonNullableStringInput(input: $value)
+                }
+                `
+				variables = map[string]interface{}{
+					"value": nil,
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNonNullableStringInput": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$value\" of required type \"String!\" was not provided\n\n1|\n2|                query SetsNonNullable($value: String!) {\n3|                    fieldWithNonNullableStringInput(input: $value)\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"column": 21,
+									"line":   3,
+								},
+							},
+						},
+					},
+				})
+			})
+
+			Convey("allows non-nullable inputs to be set to a value in a variable", func() {
+				input := `
+                query SetsNonNullable($value: String!) {
+                    fieldWithNonNullableStringInput(input: $value)
+                }
+                `
+
+				variables = map[string]interface{}{
+					"value": "a",
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNonNullableStringInput": `"a"`,
+					},
+				})
+			})
+
+			Convey("allows non-nullable inputs to be set to a value directly", func() {
+				input := `
+                {
+                    fieldWithNonNullableStringInput(input: "a")
+                }
+                `
+
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNonNullableStringInput": `"a"`,
+					},
+				})
+			})
+
+			Convey("passes along null for non-nullable inputs if explcitly set in the query", func() {
+				input := `
+                {
+                    fieldWithNonNullableStringInput
+                }
+                `
+
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithNonNullableStringInput": nil,
+					},
+				})
+			})
 		})
 
 		Convey("Handles lists and nullability", func() {
 
+			Convey("allows lists to be null", func() {
+				input := `
+                query q($input: [String]) {
+                    list(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": nil,
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"list": nil,
+					},
+				})
+			})
+
+			Convey("allows lists to contain values", func() {
+				input := `
+                query q($input: [String]) {
+                    list(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": []interface{}{"A"},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"list": `["A"]`,
+					},
+				})
+			})
+
+			Convey("allows lists to contain null", func() {
+				input := `
+                query q($input: [String]) {
+                    list(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": []interface{}{"A", nil, "B"},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"list": `["A",null,"B"]`,
+					},
+				})
+			})
+
+			Convey("does not allow non-null lists to be null", func() {
+				input := `
+                query q($input: [String]!) {
+                    nnList(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": nil,
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"nnList": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$input\" of required type \"String!\" was not provided\n\n1|\n2|                query q($input: [String]!) {\n3|                    nnList(input: $input)\n                      ^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"column": 21,
+									"line":   3,
+								},
+							},
+						},
+					},
+				})
+			})
+
+			Convey("allows non-null lists to contain values", func() {
+				input := `
+                query q($input: [String]!) {
+                    nnList(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": []interface{}{"A"},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"nnList": `["A"]`,
+					},
+				})
+			})
+
+			Convey("allows lists of non-nulls to be null", func() {
+				input := `
+                query q($input: [String!]) {
+                    listNN(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": nil,
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"listNN": nil,
+					},
+				})
+			})
+
+			Convey("allows lists of non-nulls to contain values", func() {
+				input := `
+                query q($input: [String!]) {
+                    listNN(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": []interface{}{"A"},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"listNN": `["A"]`,
+					},
+				})
+			})
+
+			Convey("does not allow lists of non-nulls to contain null", func() {
+				input := `
+                query q($input: [String!]) {
+                    listNN(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": []interface{}{"A", nil, "B"},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"listNN": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$input\" got invalid value \nIn element #1: Expected \"String!\", found null\n\n1|\n2|                query q($input: [String!]) {\n3|                    listNN(input: $input)\n                      ^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"line":   3,
+									"column": 21,
+								},
+							},
+						},
+					},
+				})
+			})
+
+			Convey("does not allow invalid types to be used as values", func() {
+				input := `
+                query q($input: TestType!) {
+                    fieldWithObjectInput(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": map[string]interface{}{
+						"list": []interface{}{"A", "B"},
+					},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithObjectInput": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$input\" expected value of type \"TestType\" which cannot be used as an input type\n\n1|\n2|                query q($input: TestType!) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"line":   3,
+									"column": 21,
+								},
+							},
+						},
+					},
+				})
+			})
+
+			Convey("does not allow unknown types to be used as values", func() {
+				input := `
+                query q($input: UnknownType!) {
+                    fieldWithObjectInput(input: $input)
+                }
+                `
+				variables = map[string]interface{}{
+					"input": map[string]interface{}{
+						"list": []interface{}{"A", "B"},
+					},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithObjectInput": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Variable \"$input\" expected value of type \"UnknownType\" which cannot be used as an input type\n\n1|\n2|                query q($input: UnknownType!) {\n3|                    fieldWithObjectInput(input: $input)\n                      ^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"line":   3,
+									"column": 21,
+								},
+							},
+						},
+					},
+				})
+			})
+
 		})
 
 		Convey("Execute: Uses argument default values", func() {
+
+			Convey("when no argument provided", func() {
+				input := `
+                {
+                    fieldWithDefaultArgumentValue
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithDefaultArgumentValue": `"Hello World"`,
+					},
+				})
+			})
+
+			Convey("when nullable variable provided", func() {
+				input := `
+                query optionalVariable($optional: String) {
+                    fieldWithDefaultArgumentValue(input: $optional)
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithDefaultArgumentValue": `"Hello World"`,
+					},
+				})
+			})
+
+			Convey("when argument provided cannot be parsed", func() {
+				input := `
+                {
+                    fieldWithDefaultArgumentValue(input: WRONG_TYPE)
+                }
+                `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"fieldWithDefaultArgumentValue": `"Hello World"`,
+					},
+				})
+			})
 
 		})
 
