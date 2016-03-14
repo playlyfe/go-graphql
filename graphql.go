@@ -5,6 +5,7 @@ type GraphQLParams struct {
 	QueryRoot        string
 	MutationRoot     string
 	Resolvers        map[string]interface{}
+	Scalars          map[string]*Scalar
 	ResolveType      func(value interface{}) string
 }
 
@@ -15,6 +16,9 @@ func NewGraphQL(params *GraphQLParams) (*Executor, error) {
 	}
 	if params.ResolveType != nil {
 		executor.ResolveType = params.ResolveType
+	}
+	if params.Scalars != nil {
+		executor.Scalars = params.Scalars
 	}
 	return executor, nil
 }
