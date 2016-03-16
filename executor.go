@@ -56,6 +56,11 @@ type Executor struct {
 	ErrorHandler func(err *Error) map[string]interface{}
 }
 
+type GroupedField struct {
+	ResponseKey string
+	Fields      []*Field
+}
+
 /**
  * Prepares an object map of variableValues of the correct type based on the
  * provided variable definitions and arbitrary input. If the input cannot be
@@ -690,8 +695,9 @@ func (executor *Executor) selectionSet(reqCtx *RequestContext, objectType *Objec
 
 }
 
-func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *ObjectTypeDefinition, selectionSet *SelectionSet, visitedFragments *utils.Set) (map[string][]*Field, error) {
-	groupedFields := map[string][]*Field{}
+func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *ObjectTypeDefinition, selectionSet *SelectionSet, visitedFragments *utils.Set) ([]*GroupedField, error) {
+	groupedFieldIndex := map[string]*GroupedField{}
+	groupedFields := []*GroupedField{}
 	for _, item := range selectionSet.Selections {
 		// if skipDirective's if argument is true then continue
 		// if includeDirective's if argument is false then continue
@@ -721,7 +727,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 
 			var responseKey string
-			var groupForResponseKey []*Field
+			var groupForResponseKey *GroupedField
 			var ok bool
 
 			if selection.Alias != nil {
@@ -729,11 +735,13 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			} else {
 				responseKey = selection.Name.Value
 			}
-			if groupForResponseKey, ok = groupedFields[responseKey]; !ok {
-				groupedFields[responseKey] = []*Field{}
-				groupForResponseKey = groupedFields[responseKey]
+			if groupForResponseKey, ok = groupedFieldIndex[responseKey]; !ok {
+				groupedField := &GroupedField{ResponseKey: responseKey, Fields: []*Field{}}
+				groupedFieldIndex[responseKey] = groupedField
+				groupedFields = append(groupedFields, groupedField)
+				groupForResponseKey = groupedField
 			}
-			groupedFields[responseKey] = append(groupForResponseKey, selection)
+			groupForResponseKey.Fields = append(groupForResponseKey.Fields, selection)
 			//log.Printf("adding selection '%s' to grouped fields of '%s'", selection.Name.Value, responseKey)
 		case *FragmentSpread:
 			var fragmentSpreadName string
@@ -801,13 +809,15 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			if err != nil {
 				return nil, err
 			}
-			for responseKey, fragmentGroup := range fragmentGroupedFields {
-				var groupForResponseKey []*Field
-				if groupForResponseKey, ok = groupedFields[responseKey]; !ok {
-					groupedFields[responseKey] = []*Field{}
-					groupForResponseKey = groupedFields[responseKey]
+			for _, fragmentGroup := range fragmentGroupedFields {
+				var groupForResponseKey *GroupedField
+				if groupForResponseKey, ok = groupedFieldIndex[fragmentGroup.ResponseKey]; !ok {
+					groupedField := &GroupedField{ResponseKey: fragmentGroup.ResponseKey, Fields: []*Field{}}
+					groupedFieldIndex[fragmentGroup.ResponseKey] = groupedField
+					groupedFields = append(groupedFields, groupedField)
+					groupForResponseKey = groupedField
 				}
-				groupedFields[responseKey] = append(groupForResponseKey, fragmentGroup...)
+				groupForResponseKey.Fields = append(groupForResponseKey.Fields, fragmentGroup.Fields...)
 			}
 		case *InlineFragment:
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil {
@@ -840,14 +850,16 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			if err != nil {
 				return nil, err
 			}
-			for responseKey, fragmentGroup := range fragmentGroupedFields {
-				var groupForResponseKey []*Field
+			for _, fragmentGroup := range fragmentGroupedFields {
+				var groupForResponseKey *GroupedField
 				var ok bool
-				if groupForResponseKey, ok = groupedFields[responseKey]; !ok {
-					groupedFields[responseKey] = []*Field{}
-					groupForResponseKey = groupedFields[responseKey]
+				if groupForResponseKey, ok = groupedFieldIndex[fragmentGroup.ResponseKey]; !ok {
+					groupedField := &GroupedField{ResponseKey: fragmentGroup.ResponseKey, Fields: []*Field{}}
+					groupedFieldIndex[fragmentGroup.ResponseKey] = groupedField
+					groupedFields = append(groupedFields, groupedField)
+					groupForResponseKey = groupedField
 				}
-				groupedFields[responseKey] = append(groupForResponseKey, fragmentGroup...)
+				groupForResponseKey.Fields = append(groupForResponseKey.Fields, fragmentGroup.Fields...)
 			}
 		default:
 			panic("Unknown selection type")
@@ -872,20 +884,20 @@ func (executor *Executor) doesFragmentTypeApply(objectType *ObjectTypeDefinition
 	return false
 }
 
-func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, objectType *ObjectTypeDefinition, source interface{}, groupedFields map[string][]*Field) (map[string]interface{}, error) {
+func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, objectType *ObjectTypeDefinition, source interface{}, groupedFields []*GroupedField) (map[string]interface{}, error) {
 	result := map[string]interface{}{}
 
 	// TODO: Use go routines?
-	for responseKey, groupForResponseKey := range groupedFields {
+	for _, groupForResponseKey := range groupedFields {
 		//log.Printf("evaluating field entry for '%s'", responseKey)
-		key, value, err := executor.getFieldEntry(reqCtx, objectType, source, responseKey, groupForResponseKey)
+		key, value, err := executor.getFieldEntry(reqCtx, objectType, source, groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
 		if err != nil {
 			return nil, err
 		}
 		//log.Printf("Adding '%s' with value '%#v' to response", key, value)
 		if key != "" {
 			//log.Printf("Adding key '%s' with value '%#v' to response", responseKey, value)
-			result[responseKey] = value
+			result[groupForResponseKey.ResponseKey] = value
 		}
 	}
 	return result, nil
