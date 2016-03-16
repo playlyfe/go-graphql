@@ -1828,14 +1828,14 @@ func TestExecutor(t *testing.T) {
 				Convey("properly runs parseLiteral on complex scalar types", func() {
 					input := `
                     {
-                        fieldWithObjectInput(input: {a: "foo", d: "SerializedValue"})
+                        fieldWithObjectInput(input: {a: "foo", d: "SerializedValue", c: "bar"})
                     }
                     `
 					result, err := executor.Execute(context, input, variables, "")
 					So(err, ShouldEqual, nil)
 					So(result, ShouldResemble, map[string]interface{}{
 						"data": map[string]interface{}{
-							"fieldWithObjectInput": `{"a":"foo","d":"DeserializedValue"}`,
+							"fieldWithObjectInput": `{"a":"foo","c":"bar","d":"DeserializedValue"}`,
 						},
 					})
 				})
@@ -2291,7 +2291,7 @@ func TestExecutor(t *testing.T) {
 				})
 			})
 
-			Convey("passes along null for non-nullable inputs if explcitly set in the query", func() {
+			Convey("errors for non-nullable inputs if not explcitly set in the query", func() {
 				input := `
                 {
                     fieldWithNonNullableStringInput
@@ -2303,6 +2303,17 @@ func TestExecutor(t *testing.T) {
 				So(result, ShouldResemble, map[string]interface{}{
 					"data": map[string]interface{}{
 						"fieldWithNonNullableStringInput": nil,
+					},
+					"errors": []map[string]interface{}{
+						{
+							"message": "Value required of type \"String!\" was not provided\n\n1|\n2|                {\n3|                    fieldWithNonNullableStringInput\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n4|                }\n5|                ",
+							"locations": []map[string]interface{}{
+								{
+									"line":   3,
+									"column": 21,
+								},
+							},
+						},
 					},
 				})
 			})

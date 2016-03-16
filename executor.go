@@ -10,6 +10,7 @@ import (
 
 	. "github.com/playlyfe/go-graphql/language"
 	"github.com/playlyfe/go-graphql/utils"
+	"sync"
 )
 
 type ResolveParams struct {
@@ -54,6 +55,7 @@ type Executor struct {
 	Resolvers    map[string]interface{}
 	Scalars      map[string]*Scalar
 	ErrorHandler func(err *Error) map[string]interface{}
+	Debug        bool
 }
 
 type GroupedField struct {
@@ -297,10 +299,16 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 
 func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) (interface{}, error) {
 	if ttype, ok := ntype.(*NonNullType); ok {
-		// Note: we're not checking that the result of valueFromAST is non-null.
-		// We're assuming that this query has been validated and the value used
-		// here is of the correct type.
-		return executor.valueFromAST(valueAST, ttype.Type, variables, variableDefinitionIndex)
+		value, err := executor.valueFromAST(valueAST, ttype.Type, variables, variableDefinitionIndex)
+		if err != nil {
+			return nil, err
+		}
+		if value == nil {
+			return nil, &GraphQLError{
+				Message: fmt.Sprintf("Value required of type \"%s!\" was not provided", ttype.Type.(*NamedType).Name.Value),
+			}
+		}
+		return value, nil
 	}
 	if valueAST == nil {
 		return nil, nil
@@ -425,12 +433,32 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 						if fieldAST != nil {
 							fieldValue, err = executor.valueFromAST(fieldAST.Value, field.Type, variables, variableDefinitionIndex)
 							if err != nil {
+								if gqlErr, ok := err.(*GraphQLError); ok {
+									return nil, &GraphQLError{
+										Message: fmt.Sprintf("In field %q: %s", field.Name.Value, gqlErr.Message),
+									}
+								}
+								return nil, err
+							}
+						} else {
+							fieldValue, err = executor.valueFromAST(nil, field.Type, variables, variableDefinitionIndex)
+							if err != nil {
+								if gqlErr, ok := err.(*GraphQLError); ok {
+									return nil, &GraphQLError{
+										Message: fmt.Sprintf("In field %q: %s", field.Name.Value, gqlErr.Message),
+									}
+								}
 								return nil, err
 							}
 						}
 						if executor.IsNullish(fieldValue) {
 							fieldValue, err = executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
 							if err != nil {
+								if gqlErr, ok := err.(*GraphQLError); ok {
+									return nil, &GraphQLError{
+										Message: fmt.Sprintf("In field %q: %s", field.Name.Value, gqlErr.Message),
+									}
+								}
 								return nil, err
 							}
 						}
@@ -478,6 +506,7 @@ func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string,
 	}
 
 	return &Executor{
+		Debug:     false,
 		Schema:    schema,
 		Resolvers: resolvers,
 		Scalars:   map[string]*Scalar{},
@@ -650,14 +679,14 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 				notFound = false
 				if operationDefinition.Operation == "query" {
 					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
-					data, err := executor.selectionSet(reqCtx, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
+					data, err := executor.selectionSet(reqCtx, true, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
 						return nil, err
 					}
 					result["data"] = data
 				} else if operationDefinition.Operation == "mutation" {
 					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
-					data, err := executor.selectionSet(reqCtx, executor.Schema.MutationRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
+					data, err := executor.selectionSet(reqCtx, false, executor.Schema.MutationRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
 						return nil, err
 					}
@@ -684,14 +713,14 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 	return result, nil
 }
 
-func (executor *Executor) selectionSet(reqCtx *RequestContext, objectType *ObjectTypeDefinition, source interface{}, selectionSet *SelectionSet) (map[string]interface{}, error) {
+func (executor *Executor) selectionSet(reqCtx *RequestContext, isParallel bool, objectType *ObjectTypeDefinition, source interface{}, selectionSet *SelectionSet) (map[string]interface{}, error) {
 	//log.Printf("collecting fields")
 	groupedFields, err := executor.collectFields(reqCtx, objectType, selectionSet, &utils.Set{})
 	if err != nil {
 		return nil, err
 	}
 	//log.Printf("resolving fields")
-	return executor.resolveGroupedFields(reqCtx, objectType, source, groupedFields)
+	return executor.resolveGroupedFields(reqCtx, isParallel, objectType, source, groupedFields)
 
 }
 
@@ -884,20 +913,53 @@ func (executor *Executor) doesFragmentTypeApply(objectType *ObjectTypeDefinition
 	return false
 }
 
-func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, objectType *ObjectTypeDefinition, source interface{}, groupedFields []*GroupedField) (map[string]interface{}, error) {
+func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, isParallel bool, objectType *ObjectTypeDefinition, source interface{}, groupedFields []*GroupedField) (map[string]interface{}, error) {
 	result := map[string]interface{}{}
 
 	// TODO: Use go routines?
-	for _, groupForResponseKey := range groupedFields {
-		//log.Printf("evaluating field entry for '%s'", responseKey)
-		key, value, err := executor.getFieldEntry(reqCtx, objectType, source, groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
-		if err != nil {
-			return nil, err
+	if isParallel && !executor.Debug {
+		var errs []error
+		wg := sync.WaitGroup{}
+		mutex := sync.Mutex{}
+		errMutex := sync.Mutex{}
+		for _, groupForResponseKey := range groupedFields {
+			//log.Printf("evaluating field entry for '%s'", responseKey)
+			wg.Add(1)
+			println("resolving parrallel", groupForResponseKey.ResponseKey)
+			go func(responseKey string, fields []*Field) {
+				key, value, err := executor.getFieldEntry(reqCtx, objectType, source, responseKey, fields)
+				if err != nil {
+					errMutex.Lock()
+					errs = append(errs, err)
+					errMutex.Unlock()
+				}
+				//log.Printf("Adding '%s' with value '%#v' to response", key, value)
+				if key != "" {
+					//log.Printf("Adding key '%s' with value '%#v' to response", responseKey, value)
+					mutex.Lock()
+					result[responseKey] = value
+					mutex.Unlock()
+				}
+				wg.Done()
+			}(groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
 		}
-		//log.Printf("Adding '%s' with value '%#v' to response", key, value)
-		if key != "" {
-			//log.Printf("Adding key '%s' with value '%#v' to response", responseKey, value)
-			result[groupForResponseKey.ResponseKey] = value
+		wg.Wait()
+		if len(errs) > 0 {
+			return nil, errs[0]
+		}
+	} else {
+		for _, groupForResponseKey := range groupedFields {
+			//log.Printf("evaluating field entry for '%s'", responseKey)
+			println("resolving serial", groupForResponseKey.ResponseKey)
+			key, value, err := executor.getFieldEntry(reqCtx, objectType, source, groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
+			if err != nil {
+				return nil, err
+			}
+			//log.Printf("Adding '%s' with value '%#v' to response", key, value)
+			if key != "" {
+				//log.Printf("Adding key '%s' with value '%#v' to response", responseKey, value)
+				result[groupForResponseKey.ResponseKey] = value
+			}
 		}
 	}
 	return result, nil
@@ -994,14 +1056,43 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 				Field:   field,
 			}
 		}
-		completedResults := []interface{}{}
-		for index := 0; index < resultVal.Len(); index++ {
-			val := resultVal.Index(index).Interface()
-			completedItem, err := executor.completeValue(reqCtx, objectType, innerType, field, val, subSelectionSet)
-			if err != nil {
-				return nil, err
+		resultLen := resultVal.Len()
+		completedResults := make([]interface{}, resultLen, resultLen)
+		var errs []error
+		mutex := sync.Mutex{}
+		errMutex := sync.Mutex{}
+		wg := sync.WaitGroup{}
+
+		if !executor.Debug {
+			for index := 0; index < resultLen; index++ {
+				wg.Add(1)
+				go func(idx int) {
+					val := resultVal.Index(idx).Interface()
+					completedItem, err := executor.completeValue(reqCtx, objectType, innerType, field, val, subSelectionSet)
+					if err != nil {
+						errMutex.Lock()
+						errs = append(errs, err)
+						errMutex.Unlock()
+					}
+					mutex.Lock()
+					completedResults[idx] = completedItem
+					mutex.Unlock()
+					wg.Done()
+				}(index)
 			}
-			completedResults = append(completedResults, completedItem)
+			wg.Wait()
+			if len(errs) > 0 {
+				return nil, errs[0]
+			}
+		} else {
+			for index := 0; index < resultLen; index++ {
+				val := resultVal.Index(index).Interface()
+				completedItem, err := executor.completeValue(reqCtx, objectType, innerType, field, val, subSelectionSet)
+				if err != nil {
+					return nil, err
+				}
+				completedResults[index] = completedItem
+			}
 		}
 		return completedResults, nil
 	}
@@ -1060,7 +1151,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		}
 
 		if objectType, ok := executor.Schema.Document.ObjectTypeIndex[typeName]; ok {
-			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
+			return executor.selectionSet(reqCtx, true, objectType, result, subSelectionSet)
 		}
 		if interfaceType, ok := executor.Schema.Document.InterfaceTypeIndex[typeName]; ok {
 			objectType, err := executor.resolveAbstractType(reqCtx, field, interfaceType, result)
@@ -1070,7 +1161,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 			if objectType == nil {
 				return nil, nil
 			}
-			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
+			return executor.selectionSet(reqCtx, true, objectType, result, subSelectionSet)
 		}
 		if unionType, ok := executor.Schema.Document.UnionTypeIndex[typeName]; ok {
 			objectType, err := executor.resolveAbstractType(reqCtx, field, unionType, result)
@@ -1080,7 +1171,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 			if objectType == nil {
 				return nil, nil
 			}
-			return executor.selectionSet(reqCtx, objectType, result, subSelectionSet)
+			return executor.selectionSet(reqCtx, true, objectType, result, subSelectionSet)
 		}
 
 		return nil, &GraphQLError{

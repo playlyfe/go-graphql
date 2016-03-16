@@ -127,7 +127,8 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 			typeInfo["description"] = __type.Description
 			inputFields := []map[string]interface{}{}
 			for _, inputValueDefinition := range __type.Fields {
-				defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, inputValueDefinition.Type, nil, nil)
+
+				defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 				if err != nil {
 					panic(err)
 				}
@@ -353,7 +354,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					}
 					args := []map[string]interface{}{}
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
-						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, inputValueDefinition.Type, nil, nil)
+						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
 							panic(err)
 						}
@@ -384,7 +385,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					}
 					args := []map[string]interface{}{}
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
-						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, inputValueDefinition.Type, nil, nil)
+						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
 							panic(err)
 						}
