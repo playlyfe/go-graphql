@@ -47,9 +47,12 @@ type SelectionSet struct {
 	LOC        *LOC
 }
 
-func (ss *SelectionSet) SelectionNames(doc *Document, whitelist []string) []string {
+func (ss *SelectionSet) SelectionNames(doc *Document, whitelist []string, path []string) []string {
 	result := []string{}
 	whitelistMap := map[string]bool{}
+	if path == nil {
+		path = []string{}
+	}
 	if whitelist != nil {
 		for _, name := range whitelist {
 			whitelistMap[name] = true
@@ -57,39 +60,70 @@ func (ss *SelectionSet) SelectionNames(doc *Document, whitelist []string) []stri
 	} else {
 		whitelistMap = nil
 	}
-	names := ss.selectionNames(doc, whitelistMap)
+	names := ss.selectionNames(doc, whitelistMap, path, len(path))
 	for name, _ := range names {
 		result = append(result, name)
 	}
 	return result
 }
 
-func (ss *SelectionSet) selectionNames(doc *Document, whitelistMap map[string]bool) map[string]bool {
+func (ss *SelectionSet) selectionNames(doc *Document, whitelistMap map[string]bool, path []string, index int) map[string]bool {
 	result := map[string]bool{}
 	for _, selection := range ss.Selections {
 		switch field := selection.(type) {
 		case *InlineFragment:
-			names := field.SelectionSet.selectionNames(doc, whitelistMap)
-			for name, _ := range names {
-				if _, ok := result[name]; !ok {
-					result[name] = true
+			if index != 0 {
+				names := field.SelectionSet.selectionNames(doc, whitelistMap, path, index)
+				for name, _ := range names {
+					if _, ok := result[name]; !ok {
+						result[name] = true
+					}
 				}
-			}
-		case *FragmentSpread:
-			fragment := doc.FragmentIndex[field.Name.Value]
-			if fragment != nil {
-				names := fragment.SelectionSet.selectionNames(doc, whitelistMap)
+			} else {
+				names := field.SelectionSet.selectionNames(doc, whitelistMap, path, index)
 				for name, _ := range names {
 					if _, ok := result[name]; !ok {
 						result[name] = true
 					}
 				}
 			}
+		case *FragmentSpread:
+			fragment := doc.FragmentIndex[field.Name.Value]
+			if fragment != nil {
+				if index != 0 {
+					names := fragment.SelectionSet.selectionNames(doc, whitelistMap, path, index)
+					for name, _ := range names {
+						if _, ok := result[name]; !ok {
+							result[name] = true
+						}
+					}
+				} else {
+					names := fragment.SelectionSet.selectionNames(doc, whitelistMap, path, index)
+					for name, _ := range names {
+						if _, ok := result[name]; !ok {
+							result[name] = true
+						}
+					}
+				}
+			}
 		case *Field:
-			if whitelistMap == nil {
-				result[field.Name.Value] = true
-			} else if _, ok := whitelistMap[field.Name.Value]; ok {
-				result[field.Name.Value] = true
+			if index != 0 {
+				if field.Name.Value == path[0] {
+					names := field.SelectionSet.selectionNames(doc, whitelistMap, path[1:], index-1)
+					for name, _ := range names {
+						if _, ok := result[name]; !ok {
+							result[name] = true
+						}
+					}
+				} else {
+					continue
+				}
+			} else {
+				if whitelistMap == nil {
+					result[field.Name.Value] = true
+				} else if _, ok := whitelistMap[field.Name.Value]; ok {
+					result[field.Name.Value] = true
+				}
 			}
 		}
 	}
