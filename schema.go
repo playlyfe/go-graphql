@@ -356,7 +356,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
 						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
-							panic(err)
+							return nil, err
 						}
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,
@@ -387,7 +387,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
 						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
-							panic(err)
+							return nil, err
 						}
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,

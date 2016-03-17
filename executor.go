@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	//"log"
 
@@ -28,10 +29,21 @@ type Error struct {
 	Field *Field
 }
 
+type ErrorList struct {
+	Errors []*Error
+	sync.Mutex
+}
+
+func (list *ErrorList) Add(err *Error) {
+	list.Lock()
+	list.Errors = append(list.Errors, err)
+	list.Unlock()
+}
+
 type RequestContext struct {
 	AppContext              interface{}
 	Document                *Document
-	Errors                  []*Error
+	ErrorList               *ErrorList
 	Variables               map[string]interface{}
 	VariableDefinitionIndex map[string]*VariableDefinition
 }
@@ -659,7 +671,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 	reqCtx := &RequestContext{
 		AppContext: context,
 		Document:   document,
-		Errors:     []*Error{},
+		ErrorList:  &ErrorList{},
 		Variables:  variables,
 	}
 
@@ -670,7 +682,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		case *OperationDefinition:
 			if (operationDefinition.Name != nil && operationDefinition.Name.Value == operationName) || operationName == "" {
 				if operationName == "" && notFound == false {
-					reqCtx.Errors = append(reqCtx.Errors, &Error{
+					reqCtx.ErrorList.Add(&Error{
 						Error: &GraphQLError{
 							Message: "GraphQL Runtime Error: Must provide operation name if query contains multiple operations",
 						},
@@ -696,16 +708,16 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		}
 	}
 	if notFound {
-		reqCtx.Errors = append(reqCtx.Errors, &Error{
+		reqCtx.ErrorList.Add(&Error{
 			Error: &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Runtime Error: Operation with name %q not found in document", operationName),
 			},
 		})
 	}
 
-	if len(reqCtx.Errors) > 0 {
+	if len(reqCtx.ErrorList.Errors) > 0 {
 		errs := []map[string]interface{}{}
-		for _, err := range reqCtx.Errors {
+		for _, err := range reqCtx.ErrorList.Errors {
 			errs = append(errs, executor.ErrorHandler(err))
 		}
 		result["errors"] = errs
@@ -918,15 +930,24 @@ func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, isParalle
 
 	// TODO: Use go routines?
 	if isParallel && !executor.Debug {
-		var errs []error
+		errs := []error{}
+		panics := []interface{}{}
 		wg := sync.WaitGroup{}
 		mutex := sync.Mutex{}
 		errMutex := sync.Mutex{}
 		for _, groupForResponseKey := range groupedFields {
 			//log.Printf("evaluating field entry for '%s'", responseKey)
 			wg.Add(1)
-			println("resolving parrallel", groupForResponseKey.ResponseKey)
 			go func(responseKey string, fields []*Field) {
+				defer func() {
+					if r := recover(); r != nil {
+						fmt.Printf("panic: %v\n%s", r, debug.Stack())
+						errMutex.Lock()
+						panics = append(panics, r)
+						errMutex.Unlock()
+						wg.Done()
+					}
+				}()
 				key, value, err := executor.getFieldEntry(reqCtx, objectType, source, responseKey, fields)
 				if err != nil {
 					errMutex.Lock()
@@ -944,13 +965,16 @@ func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, isParalle
 			}(groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
 		}
 		wg.Wait()
+		if len(panics) > 0 {
+			panic(panics[0])
+		}
 		if len(errs) > 0 {
 			return nil, errs[0]
 		}
+
 	} else {
 		for _, groupForResponseKey := range groupedFields {
 			//log.Printf("evaluating field entry for '%s'", responseKey)
-			println("resolving serial", groupForResponseKey.ResponseKey)
 			key, value, err := executor.getFieldEntry(reqCtx, objectType, source, groupForResponseKey.ResponseKey, groupForResponseKey.Fields)
 			if err != nil {
 				return nil, err
@@ -1012,7 +1036,7 @@ func (executor *Executor) completeValueCatchingError(reqCtx *RequestContext, obj
 			if gqlError.Field != nil {
 				errField = gqlError.Field
 			}
-			reqCtx.Errors = append(reqCtx.Errors, &Error{
+			reqCtx.ErrorList.Add(&Error{
 				Error: err,
 				Field: errField,
 			})
@@ -1058,7 +1082,8 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		}
 		resultLen := resultVal.Len()
 		completedResults := make([]interface{}, resultLen, resultLen)
-		var errs []error
+		errs := []error{}
+		panics := []interface{}{}
 		mutex := sync.Mutex{}
 		errMutex := sync.Mutex{}
 		wg := sync.WaitGroup{}
@@ -1067,6 +1092,16 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 			for index := 0; index < resultLen; index++ {
 				wg.Add(1)
 				go func(idx int) {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Printf("panic: %v\n%s", r, debug.Stack())
+							errMutex.Lock()
+							panics = append(panics, r)
+							errMutex.Unlock()
+							wg.Done()
+						}
+					}()
+
 					val := resultVal.Index(idx).Interface()
 					completedItem, err := executor.completeValue(reqCtx, objectType, innerType, field, val, subSelectionSet)
 					if err != nil {
@@ -1081,6 +1116,9 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 				}(index)
 			}
 			wg.Wait()
+			if len(panics) > 0 {
+				panic(panics[0])
+			}
 			if len(errs) > 0 {
 				return nil, errs[0]
 			}
@@ -1200,7 +1238,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 				gqlError.Start = firstField.Name.LOC.Start
 				gqlError.End = firstField.Name.LOC.End
 			}
-			reqCtx.Errors = append(reqCtx.Errors, &Error{
+			reqCtx.ErrorList.Add(&Error{
 				Error: err,
 				Field: firstField,
 			})
@@ -1217,7 +1255,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 		})
 		if err != nil {
 			// TODO: Check how to proceed
-			reqCtx.Errors = append(reqCtx.Errors, &Error{
+			reqCtx.ErrorList.Add(&Error{
 				Error: err,
 				Field: firstField,
 			})
@@ -1300,7 +1338,7 @@ func (executor *Executor) resolveAbstractType(reqCtx *RequestContext, field *Fie
 				return schema.ObjectTypeIndex[typeName], nil
 			}
 		}
-		reqCtx.Errors = append(reqCtx.Errors, &Error{
+		reqCtx.ErrorList.Add(&Error{
 			Error: &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for interface type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
 				Source:  field.Name.LOC.Source,
@@ -1317,7 +1355,7 @@ func (executor *Executor) resolveAbstractType(reqCtx *RequestContext, field *Fie
 				return schema.ObjectTypeIndex[typeName], nil
 			}
 		}
-		reqCtx.Errors = append(reqCtx.Errors, &Error{
+		reqCtx.ErrorList.Add(&Error{
 			Error: &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Runtime Error (%d:%d) Runtime object type %q is not a possible type for union type %q", field.Name.LOC.Start.Line, field.Name.LOC.Start.Column, typeName, typeValue.Name.Value),
 				Source:  field.LOC.Source,
