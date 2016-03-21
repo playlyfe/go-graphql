@@ -93,22 +93,22 @@ type __Directive {
 }
 `
 
-func (executor *Executor) introspectType(typeValue interface{}) map[string]interface{} {
+func (executor *Executor) introspectType(params *ResolveParams, typeValue interface{}) map[string]interface{} {
 	schema := executor.Schema.Document
 	typeIndex := schema.TypeIndex
 	switch ttype := typeValue.(type) {
 	case *NonNullType:
 		return map[string]interface{}{
 			"kind":   "NON_NULL",
-			"ofType": executor.introspectType(ttype.Type),
+			"ofType": executor.introspectType(params, ttype.Type),
 		}
 	case *ListType:
 		return map[string]interface{}{
 			"kind":   "LIST",
-			"ofType": executor.introspectType(ttype.Type),
+			"ofType": executor.introspectType(params, ttype.Type),
 		}
 	case *NamedType:
-		return executor.introspectType(ttype.Name.Value)
+		return executor.introspectType(params, ttype.Name.Value)
 	case string:
 		typeInfo := map[string]interface{}{
 			"name": ttype,
@@ -127,15 +127,14 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 			typeInfo["description"] = __type.Description
 			inputFields := []map[string]interface{}{}
 			for _, inputValueDefinition := range __type.Fields {
-
-				defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
+				defaultValue, err := executor.valueFromAST(params.Context, inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 				if err != nil {
 					panic(err)
 				}
 				inputFields = append(inputFields, map[string]interface{}{
 					"name":         inputValueDefinition.Name.Value,
 					"description":  inputValueDefinition.Description,
-					"type":         executor.introspectType(inputValueDefinition.Type),
+					"type":         executor.introspectType(params, inputValueDefinition.Type),
 					"defaultValue": defaultValue,
 				})
 			}
@@ -145,7 +144,7 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 			typeInfo["description"] = __type.Description
 			possibleTypes := []map[string]interface{}{}
 			for _, objectType := range schema.PossibleTypesIndex[__type.Name.Value] {
-				possibleTypes = append(possibleTypes, executor.introspectType(objectType.Name.Value))
+				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value))
 			}
 			typeInfo["possibleTypes"] = possibleTypes
 		case *UnionTypeDefinition:
@@ -153,7 +152,7 @@ func (executor *Executor) introspectType(typeValue interface{}) map[string]inter
 			typeInfo["description"] = __type.Description
 			possibleTypes := []map[string]interface{}{}
 			for _, objectType := range schema.PossibleTypesIndex[__type.Name.Value] {
-				possibleTypes = append(possibleTypes, executor.introspectType(objectType.Name.Value))
+				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value))
 			}
 			typeInfo["possibleTypes"] = possibleTypes
 		case *EnumTypeDefinition:
@@ -273,8 +272,8 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	resolvers[queryRoot+"/__schema"] = func(params *ResolveParams) (interface{}, error) {
 		executor := params.Executor
 		return map[string]interface{}{
-			"queryType":    executor.introspectType(queryRoot),
-			"mutationType": executor.introspectType(mutationRoot),
+			"queryType":    executor.introspectType(params, queryRoot),
+			"mutationType": executor.introspectType(params, mutationRoot),
 			"directives": []map[string]interface{}{
 				{
 					"name":        "skip",
@@ -327,12 +326,12 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 			if typeName == "__Schema" || typeName == "__Type" || typeName == "__Field" || typeName == "__InputValue" || typeName == "__EnumValue" || typeName == "__TypeKind" || typeName == "__Directive" {
 				continue
 			}
-			types = append(types, params.Executor.introspectType(typeName))
+			types = append(types, params.Executor.introspectType(params, typeName))
 		}
 		return types, nil
 	}
 	resolvers[queryRoot+"/__type"] = func(params *ResolveParams) (interface{}, error) {
-		return params.Executor.introspectType(params.Args["name"]), nil
+		return params.Executor.introspectType(params, params.Args["name"]), nil
 	}
 	resolvers["__Type/fields"] = func(params *ResolveParams) (interface{}, error) {
 		executor := params.Executor
@@ -354,14 +353,14 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					}
 					args := []map[string]interface{}{}
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
-						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
+						defaultValue, err := executor.valueFromAST(params.Context, inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
 							return nil, err
 						}
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
-							"type":         executor.introspectType(inputValueDefinition.Type),
+							"type":         executor.introspectType(params, inputValueDefinition.Type),
 							"defaultValue": defaultValue,
 						})
 					}
@@ -369,7 +368,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 						"name":              fieldDefinition.Name.Value,
 						"description":       fieldDefinition.Description,
 						"args":              args,
-						"type":              executor.introspectType(fieldDefinition.Type),
+						"type":              executor.introspectType(params, fieldDefinition.Type),
 						"isDeprecated":      fieldDefinition.IsDeprecated,
 						"deprecationReason": fieldDefinition.DeprecationReason,
 					})
@@ -385,14 +384,14 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					}
 					args := []map[string]interface{}{}
 					for _, inputValueDefinition := range fieldDefinition.Arguments {
-						defaultValue, err := executor.valueFromAST(inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
+						defaultValue, err := executor.valueFromAST(params.Context, inputValueDefinition.DefaultValue, executor.resolveNamedType(inputValueDefinition.Type), nil, nil)
 						if err != nil {
 							return nil, err
 						}
 						args = append(args, map[string]interface{}{
 							"name":         inputValueDefinition.Name.Value,
 							"description":  inputValueDefinition.Description,
-							"type":         executor.introspectType(inputValueDefinition.Type),
+							"type":         executor.introspectType(params, inputValueDefinition.Type),
 							"defaultValue": defaultValue,
 						})
 					}
@@ -400,7 +399,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 						"name":              fieldDefinition.Name.Value,
 						"description":       fieldDefinition.Description,
 						"args":              args,
-						"type":              executor.introspectType(fieldDefinition.Type),
+						"type":              executor.introspectType(params, fieldDefinition.Type),
 						"isDeprecated":      fieldDefinition.IsDeprecated,
 						"deprecationReason": fieldDefinition.DeprecationReason,
 					})
@@ -418,7 +417,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					interfaceTypes := []map[string]interface{}{}
 					if __type.Interfaces != nil {
 						for _, namedType := range __type.Interfaces {
-							interfaceTypes = append(interfaceTypes, params.Executor.introspectType(namedType.Name.Value))
+							interfaceTypes = append(interfaceTypes, params.Executor.introspectType(params, namedType.Name.Value))
 						}
 					}
 					return interfaceTypes, nil

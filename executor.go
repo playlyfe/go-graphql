@@ -55,8 +55,8 @@ type FieldParams struct {
 }
 
 type Scalar struct {
-	ParseLiteral func(value interface{}) (interface{}, error)
-	ParseValue   func(value interface{}) (interface{}, error)
+	ParseLiteral func(context interface{}, value interface{}) (interface{}, error)
+	ParseValue   func(context interface{}, value interface{}) (interface{}, error)
 	Serialize    func(value interface{}) (interface{}, error)
 }
 
@@ -84,7 +84,7 @@ type GroupedField struct {
 	values := map[string]interface{}{}
 	for _, definitionAST := range definitionASTs {
 		varName := definitionAST.Variable.Name.Value
-		varValue, err := executor.variableValue(definitionAST.Type, inputs[varName])
+		varValue, err := executor.variableValue(context, definitionAST.Type, inputs[varName])
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +119,7 @@ func (executor *Executor) resolveNamedType(ntype ASTNode) *NamedType {
  * Prepares an object map of argument values given a list of argument
  * definitions and list of argument AST nodes.
  */
-func (executor *Executor) argumentValues(argDefs map[string]*InputValueDefinition, argASTMap map[string]*Argument, variableValues map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) (map[string]interface{}, error) {
+func (executor *Executor) argumentValues(reqCtx *RequestContext, argDefs map[string]*InputValueDefinition, argASTMap map[string]*Argument, variableValues map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) (map[string]interface{}, error) {
 	result := map[string]interface{}{}
 	for _, argDef := range argDefs {
 		var valueAST ASTNode
@@ -127,12 +127,12 @@ func (executor *Executor) argumentValues(argDefs map[string]*InputValueDefinitio
 		if argAST, ok := argASTMap[name]; ok {
 			valueAST = argAST.Value
 		}
-		value, err := executor.valueFromAST(valueAST, argDef.Type, variableValues, variableDefinitionIndex)
+		value, err := executor.valueFromAST(reqCtx.AppContext, valueAST, argDef.Type, variableValues, variableDefinitionIndex)
 		if err != nil {
 			return nil, err
 		}
 		if executor.IsNullish(value) {
-			value, err = executor.valueFromAST(argDef.DefaultValue, argDef.Type, nil, nil)
+			value, err = executor.valueFromAST(reqCtx.AppContext, argDef.DefaultValue, argDef.Type, nil, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -144,9 +144,9 @@ func (executor *Executor) argumentValues(argDefs map[string]*InputValueDefinitio
 	return result, nil
 }
 
-func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (interface{}, error) {
+func (executor *Executor) variableValue(context interface{}, ntype ASTNode, input interface{}) (interface{}, error) {
 	if ttype, ok := ntype.(*NonNullType); ok {
-		value, err := executor.variableValue(ttype.Type, input)
+		value, err := executor.variableValue(context, ttype.Type, input)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +169,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 		result := []interface{}{}
 		if list, ok := input.([]interface{}); ok {
 			for index, item := range list {
-				value, err := executor.variableValue(ttype.Type, item)
+				value, err := executor.variableValue(context, ttype.Type, item)
 				if err != nil {
 					if gqlErr, ok := err.(*GraphQLError); ok {
 						return nil, &GraphQLError{
@@ -181,7 +181,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 				result = append(result, value)
 			}
 		} else {
-			value, err := executor.variableValue(ttype.Type, input)
+			value, err := executor.variableValue(context, ttype.Type, input)
 			if err != nil {
 				return nil, err
 			}
@@ -231,7 +231,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 					result := map[string]interface{}{}
 					for _, field := range fields {
 						if fieldValue, ok := object[field.Name.Value]; ok {
-							fieldValue, err := executor.variableValue(field.Type, fieldValue)
+							fieldValue, err := executor.variableValue(context, field.Type, fieldValue)
 							if err != nil {
 								if gqlErr, ok := err.(*GraphQLError); ok {
 									return nil, &GraphQLError{
@@ -241,7 +241,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 								return nil, err
 							}
 							if executor.IsNullish(fieldValue) {
-								fieldValue, err = executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
+								fieldValue, err = executor.valueFromAST(context, field.DefaultValue, field.Type, nil, nil)
 								if err != nil {
 									return nil, err
 								}
@@ -252,7 +252,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 							delete(object, field.Name.Value)
 						} else {
 							// We ensure that the missing value is nullable
-							_, err := executor.variableValue(field.Type, nil)
+							_, err := executor.variableValue(context, field.Type, nil)
 							if err != nil {
 								if gqlErr, ok := err.(*GraphQLError); ok {
 									return nil, &GraphQLError{
@@ -288,7 +288,7 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 			if scalar, ok := ttype.(*ScalarTypeDefinition); ok {
 				// TODO: Handle coercing of value for custom scalars!
 				if parser, ok := executor.Scalars[scalar.Name.Value]; ok {
-					result, err := parser.ParseValue(input)
+					result, err := parser.ParseValue(context, input)
 					if err != nil {
 						return nil, err
 					}
@@ -309,9 +309,9 @@ func (executor *Executor) variableValue(ntype ASTNode, input interface{}) (inter
 	}
 }
 
-func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) (interface{}, error) {
+func (executor *Executor) valueFromAST(context interface{}, valueAST ASTNode, ntype ASTNode, variables map[string]interface{}, variableDefinitionIndex map[string]*VariableDefinition) (interface{}, error) {
 	if ttype, ok := ntype.(*NonNullType); ok {
-		value, err := executor.valueFromAST(valueAST, ttype.Type, variables, variableDefinitionIndex)
+		value, err := executor.valueFromAST(context, valueAST, ttype.Type, variables, variableDefinitionIndex)
 		if err != nil {
 			return nil, err
 		}
@@ -350,7 +350,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 		if !ok {
 			if field != nil {
 				if field.DefaultValue != nil {
-					variableValue, err := executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
+					variableValue, err := executor.valueFromAST(context, field.DefaultValue, field.Type, nil, nil)
 					if err != nil {
 						return nil, err
 					}
@@ -372,7 +372,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			}
 		}
 
-		result, err := executor.variableValue(variableDefinitionIndex[variableName].Type, value)
+		result, err := executor.variableValue(context, variableDefinitionIndex[variableName].Type, value)
 		if err != nil {
 			if gqlErr, ok := err.(*GraphQLError); ok {
 				return nil, &GraphQLError{
@@ -387,7 +387,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 		if list, ok := valueAST.(*List); ok {
 			result := []interface{}{}
 			for _, itemAST := range list.Values {
-				itemValue, err := executor.valueFromAST(itemAST, itemType, variables, variableDefinitionIndex)
+				itemValue, err := executor.valueFromAST(context, itemAST, itemType, variables, variableDefinitionIndex)
 				if err != nil {
 					return nil, err
 				}
@@ -395,7 +395,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			}
 			return result, nil
 		} else {
-			itemValue, err := executor.valueFromAST(valueAST, itemType, variables, variableDefinitionIndex)
+			itemValue, err := executor.valueFromAST(context, valueAST, itemType, variables, variableDefinitionIndex)
 			if err != nil {
 				return nil, err
 			}
@@ -443,7 +443,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 							fieldAST = v
 						}
 						if fieldAST != nil {
-							fieldValue, err = executor.valueFromAST(fieldAST.Value, field.Type, variables, variableDefinitionIndex)
+							fieldValue, err = executor.valueFromAST(context, fieldAST.Value, field.Type, variables, variableDefinitionIndex)
 							if err != nil {
 								if gqlErr, ok := err.(*GraphQLError); ok {
 									return nil, &GraphQLError{
@@ -453,7 +453,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 								return nil, err
 							}
 						} else {
-							fieldValue, err = executor.valueFromAST(nil, field.Type, variables, variableDefinitionIndex)
+							fieldValue, err = executor.valueFromAST(context, nil, field.Type, variables, variableDefinitionIndex)
 							if err != nil {
 								if gqlErr, ok := err.(*GraphQLError); ok {
 									return nil, &GraphQLError{
@@ -464,7 +464,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 							}
 						}
 						if executor.IsNullish(fieldValue) {
-							fieldValue, err = executor.valueFromAST(field.DefaultValue, field.Type, nil, nil)
+							fieldValue, err = executor.valueFromAST(context, field.DefaultValue, field.Type, nil, nil)
 							if err != nil {
 								if gqlErr, ok := err.(*GraphQLError); ok {
 									return nil, &GraphQLError{
@@ -489,7 +489,7 @@ func (executor *Executor) valueFromAST(valueAST ASTNode, ntype ASTNode, variable
 			if scalar, ok := ttype.(*ScalarTypeDefinition); ok {
 				// TODO: Handle parsing of AST for custom scalars!
 				if scalarParser, ok := executor.Scalars[scalar.Name.Value]; ok {
-					result, err := scalarParser.ParseLiteral(valueAST)
+					result, err := scalarParser.ParseLiteral(context, valueAST)
 					if err != nil {
 						return nil, err
 					}
@@ -746,7 +746,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 		case *Field:
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil {
 				if selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -757,7 +757,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil {
 				if selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -801,7 +801,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil {
 				if selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -812,7 +812,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil {
 				if selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -823,7 +823,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if fragment.DirectiveIndex != nil && fragment.DirectiveIndex["skip"] != nil {
 				if fragment.DirectiveIndex["skip"].ArgumentIndex != nil && fragment.DirectiveIndex["skip"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(fragment.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, fragment.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -834,7 +834,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if fragment.DirectiveIndex != nil && fragment.DirectiveIndex["include"] != nil {
 				if fragment.DirectiveIndex["include"].ArgumentIndex != nil && fragment.DirectiveIndex["include"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(fragment.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, fragment.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -863,7 +863,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 		case *InlineFragment:
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["skip"] != nil {
 				if selection.DirectiveIndex["skip"].ArgumentIndex != nil && selection.DirectiveIndex["skip"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["skip"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -874,7 +874,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 			}
 			if selection.DirectiveIndex != nil && selection.DirectiveIndex["include"] != nil {
 				if selection.DirectiveIndex["include"].ArgumentIndex != nil && selection.DirectiveIndex["include"].ArgumentIndex["if"] != nil {
-					value, err := executor.valueFromAST(selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+					value, err := executor.valueFromAST(reqCtx.AppContext, selection.DirectiveIndex["include"].ArgumentIndex["if"].Value, &NamedType{Name: &Name{Value: "Boolean"}}, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 					if err != nil {
 						return nil, err
 					}
@@ -1231,7 +1231,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 		} else {
 			resolveFn = resolver.(func(params *ResolveParams) (interface{}, error))
 		}
-		args, err := executor.argumentValues(objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.ArgumentIndex, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
+		args, err := executor.argumentValues(reqCtx, objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.ArgumentIndex, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 		if err != nil {
 			if gqlError, ok := err.(*GraphQLError); ok {
 				gqlError.Source = reqCtx.Document.LOC.Source

@@ -1744,7 +1744,7 @@ func TestExecutor(t *testing.T) {
 		executor, err := NewExecutor(schema, "TestType", "", resolvers)
 		So(err, ShouldEqual, nil)
 		executor.Scalars["ComplexScalar"] = &Scalar{
-			ParseValue: func(value interface{}) (interface{}, error) {
+			ParseValue: func(context interface{}, value interface{}) (interface{}, error) {
 				if val, ok := value.(string); ok {
 					if val == "SerializedValue" {
 						return "DeserializedValue", nil
@@ -1754,7 +1754,7 @@ func TestExecutor(t *testing.T) {
 					Message: "Failed to parse ComplexScalar value",
 				}
 			},
-			ParseLiteral: func(value interface{}) (interface{}, error) {
+			ParseLiteral: func(context interface{}, value interface{}) (interface{}, error) {
 				if ast, ok := value.(*String); ok {
 					if ast.Value == "SerializedValue" {
 						return "DeserializedValue", nil
@@ -3317,4 +3317,223 @@ func TestExecutor(t *testing.T) {
 		})
 	})
 
+	Convey("Execute: Handle inputs with context", t, func() {
+		Convey("Parse Literal", func() {
+			schema := `
+      scalar FileScalar
+
+      input TestInputObject {
+        file: FileScalar
+      }
+
+      type TestType {
+          deserializedValue(input: FileScalar!): FileScalar
+      }
+      `
+			resolvers := map[string]interface{}{}
+			resolvers["TestType/deserializedValue"] = func(params *ResolveParams) (interface{}, error) {
+				return params.Args["input"], nil
+			}
+			executor, err := NewExecutor(schema, "TestType", "", resolvers)
+			executor.Debug = true
+			So(err, ShouldEqual, nil)
+			executor.Scalars["FileScalar"] = &Scalar{
+				ParseValue: func(context interface{}, value interface{}) (interface{}, error) {
+					if _, ok := value.(string); ok {
+						if val, ok := context.(map[string]interface{}); ok {
+							if id, ok := val["id"].(string); ok {
+								if id == "admin" {
+									return "GotAdmin", nil
+								}
+							}
+						}
+					}
+					return nil, &GraphQLError{
+						Message: "Failed to parse value FileScalar value",
+					}
+				},
+				ParseLiteral: func(context interface{}, value interface{}) (interface{}, error) {
+					if _, ok := value.(*String); ok {
+						if val, ok := context.(map[string]interface{}); ok {
+							if id, ok := val["id"].(string); ok {
+								if id == "admin" {
+									return "GotAdmin", nil
+								}
+							}
+						}
+					}
+					return nil, &GraphQLError{
+						Message: "Failed to parse literal FileScalar value",
+					}
+				},
+				Serialize: func(value interface{}) (interface{}, error) {
+					return value, nil
+				},
+			}
+			executor.ResolveType = func(value interface{}) string {
+				if object, ok := value.(map[string]interface{}); ok {
+					return object["__typename"].(string)
+				}
+				return ""
+			}
+
+			Convey("Cannot Parse Literal on FileScalar when no context", func() {
+				context := map[string]interface{}{}
+				variables := map[string]interface{}{}
+				input := `
+          {
+            deserializedValue(input: "hello")
+          }
+        `
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"deserializedValue": nil,
+					},
+					"errors": []map[string]interface{}{
+						map[string]interface{}{
+							"locations": []map[string]interface{}{
+								map[string]interface{}{
+									"line":   3,
+									"column": 13,
+								},
+							},
+							"message": "Failed to parse literal FileScalar value\n\n1|\n2|          {\n3|            deserializedValue(input: \"hello\")\n              ^^^^^^^^^^^^^^^^^\n4|          }\n5|        ",
+						},
+					},
+				})
+			})
+
+			Convey("Can Parse Literal on FileScalar when context is there", func() {
+				input := `
+          {
+            deserializedValue(input: "hello")
+          }
+        `
+				context := map[string]interface{}{"id": "admin"}
+				variables := map[string]interface{}{}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"deserializedValue": "GotAdmin",
+					},
+				})
+			})
+		})
+
+		Convey("Parse Value", func() {
+			schema := `
+      scalar FileScalar
+
+      input TestInputObject {
+        file: FileScalar
+      }
+
+      type TestType {
+          deserializedValue(input: FileScalar!): FileScalar
+      }
+      `
+			resolvers := map[string]interface{}{}
+			resolvers["TestType/deserializedValue"] = func(params *ResolveParams) (interface{}, error) {
+				return params.Args["input"].(map[string]interface{})["file"], nil
+			}
+			executor, err := NewExecutor(schema, "TestType", "", resolvers)
+			executor.Debug = true
+			So(err, ShouldEqual, nil)
+			executor.Scalars["FileScalar"] = &Scalar{
+				ParseValue: func(context interface{}, value interface{}) (interface{}, error) {
+					if _, ok := value.(string); ok {
+						if val, ok := context.(map[string]interface{}); ok {
+							if id, ok := val["id"].(string); ok {
+								if id == "admin" {
+									return "GotAdmin", nil
+								}
+							}
+						}
+					}
+					return nil, &GraphQLError{
+						Message: "Failed to parse value FileScalar value",
+					}
+				},
+				ParseLiteral: func(context interface{}, value interface{}) (interface{}, error) {
+					if _, ok := value.(*String); ok {
+						if val, ok := context.(map[string]interface{}); ok {
+							if id, ok := val["id"].(string); ok {
+								if id == "admin" {
+									return "GotAdmin", nil
+								}
+							}
+						}
+					}
+					return nil, &GraphQLError{
+						Message: "Failed to parse literal FileScalar value",
+					}
+				},
+				Serialize: func(value interface{}) (interface{}, error) {
+					return value, nil
+				},
+			}
+			executor.ResolveType = func(value interface{}) string {
+				if object, ok := value.(map[string]interface{}); ok {
+					return object["__typename"].(string)
+				}
+				return ""
+			}
+			Convey("Cannot Parse Value on FileScalar when no context", func() {
+				input := `
+        query q($input: TestInputObject) {
+          deserializedValue(input: $input)
+        }
+      `
+				result, err := executor.Execute(
+					map[string]interface{}{},
+					input,
+					map[string]interface{}{
+						"input": map[string]interface{}{
+							"file": "hello",
+						},
+					}, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"deserializedValue": nil,
+					},
+					"errors": []map[string]interface{}{
+						map[string]interface{}{
+							"locations": []map[string]interface{}{
+								map[string]interface{}{
+									"line":   3,
+									"column": 11,
+								},
+							},
+							"message": "Variable \"$input\" got invalid value \nIn field \"file\": Failed to parse value FileScalar value\n\n1|\n2|        query q($input: TestInputObject) {\n3|          deserializedValue(input: $input)\n            ^^^^^^^^^^^^^^^^^\n4|        }\n5|      ",
+						},
+					},
+				})
+			})
+
+			Convey("Can Parse Value on FileScalar when context is there", func() {
+				input := `
+        query q($input: TestInputObject) {
+          deserializedValue(input: $input)
+        }
+      `
+				context := map[string]interface{}{"id": "admin"}
+				variables := map[string]interface{}{
+					"input": map[string]interface{}{
+						"file": "hello",
+					},
+				}
+				result, err := executor.Execute(context, input, variables, "")
+				So(err, ShouldEqual, nil)
+				So(result, ShouldResemble, map[string]interface{}{
+					"data": map[string]interface{}{
+						"deserializedValue": "GotAdmin",
+					},
+				})
+			})
+		})
+	})
 }
