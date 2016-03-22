@@ -1764,7 +1764,7 @@ func TestExecutor(t *testing.T) {
 					Message: "Failed to parse ComplexScalar value",
 				}
 			},
-			Serialize: func(value interface{}) (interface{}, error) {
+			Serialize: func(context interface{}, value interface{}) (interface{}, error) {
 				if val, ok := value.(string); ok {
 					if val == "DeserializedValue" {
 						return "SerializedValue", nil
@@ -3366,7 +3366,7 @@ func TestExecutor(t *testing.T) {
 						Message: "Failed to parse literal FileScalar value",
 					}
 				},
-				Serialize: func(value interface{}) (interface{}, error) {
+				Serialize: func(context interface{}, value interface{}) (interface{}, error) {
 					return value, nil
 				},
 			}
@@ -3471,7 +3471,7 @@ func TestExecutor(t *testing.T) {
 						Message: "Failed to parse literal FileScalar value",
 					}
 				},
-				Serialize: func(value interface{}) (interface{}, error) {
+				Serialize: func(context interface{}, value interface{}) (interface{}, error) {
 					return value, nil
 				},
 			}
