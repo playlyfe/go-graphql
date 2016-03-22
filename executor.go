@@ -57,7 +57,7 @@ type FieldParams struct {
 type Scalar struct {
 	ParseLiteral func(context interface{}, value interface{}) (interface{}, error)
 	ParseValue   func(context interface{}, value interface{}) (interface{}, error)
-	Serialize    func(value interface{}) (interface{}, error)
+	Serialize    func(context interface{}, value interface{}) (interface{}, error)
 }
 
 type Executor struct {
@@ -1175,7 +1175,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		if scalar, ok := executor.Schema.Document.ScalarTypeIndex[typeName]; ok {
 			parser, ok := executor.Scalars[typeName]
 			if ok {
-				val, err := parser.Serialize(result)
+				val, err := parser.Serialize(reqCtx.AppContext, result)
 				if err != nil {
 					return nil, err
 				} else {
