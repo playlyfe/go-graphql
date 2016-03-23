@@ -3537,3 +3537,282 @@ func TestExecutor(t *testing.T) {
 		})
 	})
 }
+
+func SetupBenchmark(name string) (*Executor, interface{}, map[string]interface{}) {
+	switch name {
+	case "simple":
+		schema := `
+            type Image {
+                url: String
+                width: Int
+                height: Int
+            }
+
+            type Author {
+                id: String
+                name: String
+                pic(width: Int, height: Int): Image
+                recentArticle: Article
+            }
+
+            type Article {
+                id: String!
+                isPublished: Boolean
+                author: Author
+                title: String
+                body: String
+                keywords: [String]
+            }
+
+            type Query {
+                article(id: ID): Article
+                feed: [Article]
+            }
+            `
+
+		var johnSmith *Author
+		article := func(id string) *Article {
+			return &Article{
+				ID:          id,
+				IsPublished: "true",
+				Author:      johnSmith,
+				Title:       "My Article " + id,
+				Body:        "This is a post",
+				Hidden:      "This data is not exposed in the schema",
+				Keywords:    []interface{}{"foo", "bar", 1, true, nil},
+			}
+		}
+		johnSmith = &Author{
+			ID:            123,
+			Name:          "John Smith",
+			RecentArticle: article("1"),
+		}
+
+		resolvers := map[string]interface{}{}
+		resolvers["Author/pic"] = func(params *ResolveParams) (interface{}, error) {
+			if author, ok := params.Source.(*Author); ok {
+				return author.Pic(int(params.Args["width"].(int32)), int(params.Args["height"].(int32))), nil
+			}
+			return nil, nil
+		}
+		resolvers["Query/article"] = func(params *ResolveParams) (interface{}, error) {
+			return article(params.Args["id"].(string)), nil
+		}
+		resolvers["Query/feed"] = func(params *ResolveParams) (interface{}, error) {
+			return []*Article{
+				article("1"),
+				article("2"),
+				article("3"),
+				article("4"),
+				article("5"),
+				article("6"),
+				article("7"),
+				article("8"),
+				article("9"),
+				article("10"),
+			}, nil
+		}
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{}
+		executor, err := NewExecutor(schema, "Query", "", resolvers)
+		if err != nil {
+			panic(err)
+		}
+		return executor, context, variables
+	case "complex":
+		schema := `
+            type DataType {
+                a: String
+                b: String
+                c: String
+                d: String
+                e: String
+                f: String
+                pic(size: Int): String
+                deep: DeepDataType
+                promise: DataType
+            }
+
+            type DeepDataType {
+                a: String
+                b: String
+                c: [String]
+                deeper: [DataType]
+            }
+            `
+		resolvers := map[string]interface{}{}
+		resolvers["DataType/a"] = func(params *ResolveParams) (interface{}, error) {
+			return "Apple", nil
+		}
+		resolvers["DataType/b"] = func(params *ResolveParams) (interface{}, error) {
+			return "Banana", nil
+		}
+		resolvers["DataType/c"] = func(params *ResolveParams) (interface{}, error) {
+			return "Cookie", nil
+		}
+		resolvers["DataType/d"] = func(params *ResolveParams) (interface{}, error) {
+			return "Donut", nil
+		}
+		resolvers["DataType/e"] = func(params *ResolveParams) (interface{}, error) {
+			return "Egg", nil
+		}
+		resolvers["DataType/f"] = &FieldParams{
+			Resolve: func(params *ResolveParams) (interface{}, error) {
+				return "Fish", nil
+			},
+		}
+		resolvers["DataType/pic"] = func(params *ResolveParams) (interface{}, error) {
+			var size int32
+			var ok bool
+			if size, ok = params.Args["size"].(int32); !ok {
+				size = 50
+			}
+			return fmt.Sprintf("Pic of size: %d", size), nil
+		}
+		resolvers["DataType/deep"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+		resolvers["DataType/promise"] = func(params *ResolveParams) (interface{}, error) {
+			return map[string]interface{}{}, nil
+		}
+		resolvers["DeepDataType/a"] = func(params *ResolveParams) (interface{}, error) {
+			return "Already Been Done", nil
+		}
+		resolvers["DeepDataType/b"] = func(params *ResolveParams) (interface{}, error) {
+			return "Boring", nil
+		}
+		resolvers["DeepDataType/c"] = func(params *ResolveParams) (interface{}, error) {
+			return []interface{}{"Contrived", nil, "Confusing"}, nil
+		}
+		resolvers["DeepDataType/deeper"] = func(params *ResolveParams) (interface{}, error) {
+			return []interface{}{map[string]interface{}{}, nil, map[string]interface{}{}}, nil
+		}
+
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{
+			"size": 100,
+		}
+		executor, err := NewExecutor(schema, "DataType", "", resolvers)
+		if err != nil {
+			panic(err)
+		}
+
+		return executor, context, variables
+	default:
+		panic("Benchmark not found")
+	}
+}
+
+func BenchmarkSimpleEmptyRequest(b *testing.B) {
+	b.StopTimer()
+	executor, context, variables := SetupBenchmark("simple")
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		input := `
+            {}
+        `
+		_, err := executor.Execute(context, input, variables, "")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func BenchmarkSimpleRequest(b *testing.B) {
+	b.StopTimer()
+	executor, context, variables := SetupBenchmark("simple")
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		input := `
+            query Example($size: Int) {
+                a,
+                b,
+                x: c
+                ...c
+                f
+                ...on DataType {
+                    pic(size: $size)
+                    promise {
+                        a
+                    }
+                }
+                deep {
+                    a
+                    b
+                    c
+                    deeper {
+                        a
+                        b
+                    }
+                }
+            }
+            fragment c on DataType {
+                d
+                e
+            }
+            `
+		_, err := executor.Execute(context, input, variables, "Example")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func BenchmarkComplexEmptyRequest(b *testing.B) {
+	b.StopTimer()
+	executor, context, variables := SetupBenchmark("complex")
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		input := `
+            {}
+        `
+		_, err := executor.Execute(context, input, variables, "")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func BenchmarkComplexRequest(b *testing.B) {
+	b.StopTimer()
+	executor, context, variables := SetupBenchmark("simple")
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		input := `
+            {
+                feed {
+                    id,
+                    title
+                },
+                article(id: "1") {
+                    ...articleFields,
+                    author {
+                        id,
+                        name,
+                        pic(width: 640, height: 480) {
+                            url,
+                            width,
+                            height
+                        },
+                        recentArticle {
+                            ...articleFields,
+                            keywords
+                        }
+                    }
+                }
+            }
+            fragment articleFields on Article {
+                id,
+                isPublished,
+                title,
+                body,
+                hidden,
+                notdefined
+            }
+            `
+		_, err := executor.Execute(context, input, variables, "")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
