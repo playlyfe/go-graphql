@@ -1270,6 +1270,9 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 	sourceValKind := sourceValType.Kind()
 	if sourceVal.IsValid() && sourceValKind == reflect.Ptr {
 		sourceVal = sourceVal.Elem()
+		if !sourceVal.IsValid() {
+			return nil, nil
+		}
 		sourceValType = sourceVal.Type()
 		sourceValKind = sourceValType.Kind()
 	}
