@@ -67,6 +67,8 @@ type Executor struct {
 	Resolvers    map[string]interface{}
 	Scalars      map[string]*Scalar
 	ErrorHandler func(err *Error) map[string]interface{}
+	Before       func(params *ResolveParams, operation string) error
+	After        func(params *ResolveParams, result map[string]interface{}) error
 	Debug        bool
 }
 
@@ -689,6 +691,18 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 					})
 				}
 				notFound = false
+				if executor.Before != nil {
+					err = executor.Before(&ResolveParams{
+						Executor: executor,
+						Schema:   executor.Schema.Document,
+						Request:  reqCtx.Document,
+						Context:  reqCtx.AppContext,
+					}, operationDefinition.Operation)
+					if err != nil {
+						return nil, err
+					}
+				}
+
 				if operationDefinition.Operation == "query" {
 					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
 					data, err := executor.selectionSet(reqCtx, true, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
@@ -722,6 +736,19 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		}
 		result["errors"] = errs
 	}
+
+	if executor.After != nil {
+		err = executor.After(&ResolveParams{
+			Executor: executor,
+			Schema:   executor.Schema.Document,
+			Request:  reqCtx.Document,
+			Context:  reqCtx.AppContext,
+		}, result)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return result, nil
 }
 

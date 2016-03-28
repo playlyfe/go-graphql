@@ -720,7 +720,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, err := strconv.ParseInt(token.Val, 10, 32)
+		val, err := strconv.ParseInt(token.Val, 10, 64)
 		if err != nil {
 			return nil, err
 		}
@@ -734,7 +734,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		val, err := strconv.ParseFloat(token.Val, 32)
+		val, err := strconv.ParseFloat(token.Val, 64)
 		if err != nil {
 			return nil, err
 		}

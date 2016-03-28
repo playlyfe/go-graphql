@@ -114,7 +114,6 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 func CoerceString(value interface{}) (string, bool) {
 	switch result := value.(type) {
 	case int:
-		println(result, "--------", strconv.FormatInt(int64(result), 10))
 		return strconv.FormatInt(int64(result), 10), true
 	case int32:
 		return strconv.FormatInt(int64(result), 10), true
