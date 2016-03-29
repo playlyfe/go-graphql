@@ -1327,15 +1327,20 @@ input Hello {
 			So(err, ShouldEqual, nil)
 			loc := createLOCFn(parser.source)
 
+			worldField := inputValueNode(
+				nameNode("world", loc(17, 22)),
+				typeNode("String", loc(24, 30)),
+				nil,
+				loc(17, 30),
+			)
+
 			helloTypeDef := &InputObjectTypeDefinition{
 				Name: nameNode("Hello", loc(7, 12)),
 				Fields: []*InputValueDefinition{
-					inputValueNode(
-						nameNode("world", loc(17, 22)),
-						typeNode("String", loc(24, 30)),
-						nil,
-						loc(17, 30),
-					),
+					worldField,
+				},
+				FieldIndex: map[string]*InputValueDefinition{
+					"world": worldField,
 				},
 				LOC: loc(1, 32),
 			}

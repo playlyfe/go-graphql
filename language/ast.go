@@ -325,6 +325,7 @@ type InputObjectTypeDefinition struct {
 	Name        *Name
 	Description string
 	Fields      []*InputValueDefinition
+	FieldIndex  map[string]*InputValueDefinition
 	LOC         *LOC
 }
 

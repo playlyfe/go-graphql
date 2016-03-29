@@ -1389,6 +1389,7 @@ func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjec
 	node := &InputObjectTypeDefinition{
 		Description: description,
 	}
+	fieldIndex := map[string]*InputValueDefinition{}
 	start := parser.lookahead.Start
 	err := parser.matchName("input")
 	if err != nil {
@@ -1408,10 +1409,14 @@ func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjec
 			return nil, err
 		}
 		node.Fields = append(node.Fields, field)
+		fieldIndex[field.Name.Value] = field
 	}
 	err = parser.match(RBRACE)
 	if err != nil {
 		return nil, err
+	}
+	if len(node.Fields) > 0 {
+		node.FieldIndex = fieldIndex
 	}
 	node.LOC = parser.loc(start)
 	return node, nil

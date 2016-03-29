@@ -251,7 +251,6 @@ func (executor *Executor) variableValue(context interface{}, ntype ASTNode, inpu
 							if !executor.IsNullish(fieldValue) {
 								result[field.Name.Value] = fieldValue
 							}
-							delete(object, field.Name.Value)
 						} else {
 							// We ensure that the missing value is nullable
 							_, err := executor.variableValue(context, field.Type, nil)
@@ -266,8 +265,10 @@ func (executor *Executor) variableValue(context interface{}, ntype ASTNode, inpu
 						}
 					}
 					for key, _ := range object {
-						return nil, &GraphQLError{
-							Message: fmt.Sprintf("In field %q: Unknown field", key),
+						if _, exists := inputType.FieldIndex[key]; !exists {
+							return nil, &GraphQLError{
+								Message: fmt.Sprintf("In field %q: Unknown field", key),
+							}
 						}
 					}
 					return result, nil
