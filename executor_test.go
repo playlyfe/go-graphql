@@ -3536,6 +3536,132 @@ func TestExecutor(t *testing.T) {
 			})
 		})
 	})
+
+	Convey("Execute: Applies before and after middleware", t, func() {
+		schema := `
+        type TestType {
+            a(replace: String, test: Boolean): String
+            b(suffix: String, test: Boolean): String
+        }
+        `
+		resolvers := map[string]interface{}{}
+		resolvers["TestType/a"] = &FieldParams{
+			Before: func(params *ResolveParams) (interface{}, error) {
+				if test, ok := params.Args["test"].(bool); ok && test {
+					return nil, errors.New("Test failed")
+				}
+				if replace, ok := params.Args["replace"].(string); ok {
+					return replace, nil
+				}
+				return nil, nil
+
+			},
+			Resolve: func(params *ResolveParams) (interface{}, error) {
+				return "a", nil
+			},
+		}
+		resolvers["TestType/b"] = &FieldParams{
+			Resolve: func(params *ResolveParams) (interface{}, error) {
+				return "b", nil
+			},
+			After: func(params *ResolveParams, result interface{}) (interface{}, error) {
+				if test, ok := params.Args["test"].(bool); ok && test {
+					return nil, errors.New("Test failed")
+				}
+				if suffix, ok := params.Args["suffix"].(string); ok {
+					return result.(string) + suffix, nil
+				}
+				return result, nil
+			},
+		}
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{}
+		executor, err := NewExecutor(schema, "TestType", "", resolvers)
+		So(err, ShouldEqual, nil)
+
+		Convey("before middleware", func() {
+			input := `{ a(test: true) }`
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": nil,
+				},
+				"errors": []map[string]interface{}{
+					{
+						"locations": []map[string]interface{}{
+							{
+								"column": 3,
+								"line":   1,
+							},
+						},
+						"message": "Test failed",
+					},
+				},
+			})
+
+			input = `{ a(test: false) }`
+			result, err = executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": "a",
+				},
+			})
+
+			input = `{ a(replace: "X", test: false) }`
+			result, err = executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": "X",
+				},
+			})
+		})
+		Convey("after middleware", func() {
+			input := `{ a, b(suffix: "XX") }`
+			result, err := executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": "a",
+					"b": "bXX",
+				},
+			})
+
+			input = `{ a, b(suffix: "XX", test: false) }`
+			result, err = executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": "a",
+					"b": "bXX",
+				},
+			})
+
+			input = `{ a, b(suffix: "XX", test: true) }`
+			result, err = executor.Execute(context, input, variables, "")
+			So(err, ShouldEqual, nil)
+			So(result, ShouldResemble, map[string]interface{}{
+				"data": map[string]interface{}{
+					"a": "a",
+					"b": nil,
+				},
+				"errors": []map[string]interface{}{
+					{
+						"locations": []map[string]interface{}{
+							{
+								"column": 6,
+								"line":   1,
+							},
+						},
+						"message": "Test failed",
+					},
+				},
+			})
+		})
+	})
+
 }
 
 func SetupBenchmark(name string) (*Executor, interface{}, map[string]interface{}) {

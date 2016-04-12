@@ -50,8 +50,8 @@ type RequestContext struct {
 
 type FieldParams struct {
 	Resolve func(params *ResolveParams) (interface{}, error)
-	Before  func(params *ResolveParams) error
-	After   func(params *ResolveParams) error
+	Before  func(params *ResolveParams) (interface{}, error)
+	After   func(params *ResolveParams, result interface{}) (interface{}, error)
 }
 
 type Scalar struct {
@@ -1253,9 +1253,13 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 	resolverName := objectType.Name.Value + "/" + firstField.Name.Value
 	if resolver, ok := executor.Resolvers[resolverName]; ok {
 		var resolveFn func(params *ResolveParams) (interface{}, error)
+		var beforeFn func(params *ResolveParams) (interface{}, error)
+		var afterFn func(params *ResolveParams, result interface{}) (interface{}, error)
 		fieldParams, ok := resolver.(*FieldParams)
 		if ok {
+			beforeFn = fieldParams.Before
 			resolveFn = fieldParams.Resolve
+			afterFn = fieldParams.After
 		} else {
 			resolveFn = resolver.(func(params *ResolveParams) (interface{}, error))
 		}
@@ -1272,7 +1276,9 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			})
 			return nil, nil
 		}
-		result, err := resolveFn(&ResolveParams{
+
+		// Execute the before function if it is defined
+		resolveParams := &ResolveParams{
 			Executor: executor,
 			Schema:   executor.Schema.Document,
 			Request:  reqCtx.Document,
@@ -1280,7 +1286,23 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			Source:   object,
 			Args:     args,
 			Field:    firstField,
-		})
+		}
+
+		if beforeFn != nil {
+			beforeResult, err := beforeFn(resolveParams)
+			if err != nil {
+				reqCtx.ErrorList.Add(&Error{
+					Error: err,
+					Field: firstField,
+				})
+				return nil, nil
+			}
+			if beforeResult != nil {
+				return beforeResult, nil
+			}
+		}
+
+		result, err := resolveFn(resolveParams)
 		if err != nil {
 			// TODO: Check how to proceed
 			reqCtx.ErrorList.Add(&Error{
@@ -1288,8 +1310,21 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 				Field: firstField,
 			})
 			return nil, nil
-			return nil, nil
 		}
+
+		if afterFn != nil {
+			afterResult, err := afterFn(resolveParams, result)
+			if err != nil {
+				// TODO: Check how to proceed
+				reqCtx.ErrorList.Add(&Error{
+					Error: err,
+					Field: firstField,
+				})
+				return nil, nil
+			}
+			return afterResult, nil
+		}
+
 		return result, nil
 	}
 
