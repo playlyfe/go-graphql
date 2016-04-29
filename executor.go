@@ -50,6 +50,7 @@ type RequestContext struct {
 
 type FieldParams struct {
 	Resolve func(params *ResolveParams) (interface{}, error)
+	Around  func(before bool, params *ResolveParams, result interface{}) (interface{}, error)
 	Before  func(params *ResolveParams) (interface{}, error)
 	After   func(params *ResolveParams, result interface{}) (interface{}, error)
 }
@@ -1255,8 +1256,10 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 		var resolveFn func(params *ResolveParams) (interface{}, error)
 		var beforeFn func(params *ResolveParams) (interface{}, error)
 		var afterFn func(params *ResolveParams, result interface{}) (interface{}, error)
+		var aroundFn func(before bool, params *ResolveParams, result interface{}) (interface{}, error)
 		fieldParams, ok := resolver.(*FieldParams)
 		if ok {
+			aroundFn = fieldParams.Around
 			beforeFn = fieldParams.Before
 			resolveFn = fieldParams.Resolve
 			afterFn = fieldParams.After
@@ -1301,6 +1304,19 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 				return beforeResult, nil
 			}
 		}
+		if aroundFn != nil {
+			beforeResult, err := aroundFn(true, resolveParams, nil)
+			if err != nil {
+				reqCtx.ErrorList.Add(&Error{
+					Error: err,
+					Field: firstField,
+				})
+				return nil, nil
+			}
+			if beforeResult != nil {
+				return beforeResult, nil
+			}
+		}
 
 		result, err := resolveFn(resolveParams)
 		if err != nil {
@@ -1314,6 +1330,18 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 
 		if afterFn != nil {
 			afterResult, err := afterFn(resolveParams, result)
+			if err != nil {
+				// TODO: Check how to proceed
+				reqCtx.ErrorList.Add(&Error{
+					Error: err,
+					Field: firstField,
+				})
+				return nil, nil
+			}
+			return afterResult, nil
+		}
+		if aroundFn != nil {
+			afterResult, err := aroundFn(false, resolveParams, result)
 			if err != nil {
 				// TODO: Check how to proceed
 				reqCtx.ErrorList.Add(&Error{
