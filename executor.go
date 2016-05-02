@@ -1269,7 +1269,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			resolveFn = fieldParams.Resolve
 			afterFn = fieldParams.After
 		} else {
-			resolveFn = resolver.(ResolveFn)
+			resolveFn = ResolveFn(resolver.(func(*ResolveParams) (interface{}, error)))
 		}
 		args, err := executor.argumentValues(reqCtx, objectType.FieldIndex[firstField.Name.Value].ArgumentIndex, firstField.ArgumentIndex, reqCtx.Variables, reqCtx.VariableDefinitionIndex)
 		if err != nil {
