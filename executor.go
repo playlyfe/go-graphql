@@ -1211,14 +1211,15 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 			if ok {
 				val, err := parser.Serialize(reqCtx.AppContext, result)
 				if err != nil {
+					if gqlErr, ok := err.(*GraphQLError); ok {
+						gqlErr.Field = field
+					}
 					return nil, err
-				} else {
-					return val, nil
 				}
-			} else {
-				return nil, &GraphQLError{
-					Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
-				}
+				return val, nil
+			}
+			return nil, &GraphQLError{
+				Message: fmt.Sprintf("Scalar %s has not been implemented", scalar.Name.Value),
 			}
 		}
 
@@ -1389,6 +1390,13 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 			}
 			if jsonOptions[0] != firstField.Name.Value {
 				continue
+			}
+			if valueField.IsValid() && valueField.Kind() == reflect.Ptr {
+				elem := valueField.Elem()
+				if elem.IsValid() {
+					return valueField.Interface(), nil
+				}
+				return nil, nil
 			}
 			return valueField.Interface(), nil
 		}
