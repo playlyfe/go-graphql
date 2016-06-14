@@ -3,6 +3,14 @@ A powerful GraphQL server implementation for Golang
 
 You can declare a schema like this
 ```go
+package main
+
+import (
+    "fmt"
+
+    "github.com/playlyfe/go-graphql"
+)
+
 schema := `
 interface Pet {
     name: String
@@ -20,7 +28,7 @@ type QueryRoot {
 }
 `
 resolvers := map[string]interface{}{}
-resolvers["QueryRoot/pets"] = func(params *ResolveParams) (interface{}, error) {
+resolvers["QueryRoot/pets"] = func(params *graphql.ResolveParams) (interface{}, error) {
 	return []map[string]interface{}{
 		{
 			"__typename": "Dog",
@@ -36,7 +44,7 @@ resolvers["QueryRoot/pets"] = func(params *ResolveParams) (interface{}, error) {
 }
 context := map[string]interface{}{}
 variables := map[string]interface{}{}
-executor, err := NewExecutor(schema, "QueryRoot", "", resolvers)
+executor, err := graphql.NewExecutor(schema, "QueryRoot", "", resolvers)
 executor.ResolveType = func(value interface{}) string {
 	if object, ok := value.(map[string]interface{}); ok {
 		return object["__typename"].(string)
@@ -44,4 +52,8 @@ executor.ResolveType = func(value interface{}) string {
 	return ""
 }
 result, err := executor.Execute(context, schema, variables, "")
+if err != nil {
+    panic(err)
+}
+fmt.Printf("%v", result)
 ```
