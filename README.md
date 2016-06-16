@@ -54,7 +54,18 @@ func main() {
 		}
 		return ""
 	}
-	result, err := executor.Execute(context, schema, variables, "")
+	query := `{
+		pets {
+			name
+			... on Dog {
+				woofs
+			}
+			... on Cat {
+				meows
+			}
+		}
+	}`
+	result, err := executor.Execute(context, query, variables, "")
 	if err != nil {
 	    panic(err)
 	}
