@@ -94,3 +94,6 @@ Running 30s test @ http://localhost:3003/graphql?query={hello}
 Requests/sec:  17108.13
 Transfer/sec:      2.35MB
 ```
+
+# TODO
+Validator
