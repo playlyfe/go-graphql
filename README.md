@@ -80,6 +80,20 @@ BenchmarkPlaylyfeGraphQLMaster-4       50000         27647 ns/op        3269 B/o
 ```
 
 ## More
+### graphql-js master
+```
+wrk -t12 -c400 -d30s --timeout 10s "http://localhost:3002/graphql?query={hello}"
+Running 30s test @ http://localhost:3002/graphql?query={hello}
+  12 threads and 400 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   219.79ms   80.35ms 613.69ms   78.38%
+    Req/Sec   149.99     96.37   494.00     58.29%
+  52157 requests in 30.05s, 9.96MB read
+Requests/sec:   1735.60
+Transfer/sec:    339.33KB
+
+```
+
 ### graphql-go master
 ```
 wrk -t12 -c400 -d30s --timeout 10s "http://localhost:3003/graphql?query={hello}"
