@@ -1,4 +1,4 @@
-# go-graphql
+# GraphQL
 A powerful GraphQL server implementation for Golang. Its aim is to be the fastest GraphQL implementation.
 
 ```sh
@@ -63,13 +63,10 @@ func main() {
 ```
 ## Benchmarks
 ```
+Name                                 Repetitions   
 BenchmarkGoGraphQLMaster-4             10000        230846 ns/op       29209 B/op        543 allocs/op
 BenchmarkPlaylyfeGraphQLMaster-4       50000         27647 ns/op        3269 B/op         61 allocs/op
 ```
-(1): Total Repetitions
-(2): Single Repetition Duration (ns/op)
-(3): Heap Memory (B/op)
-(4): Average Allocations per Repetition (allocs/op)
 
 ## More
 ### graphql-go master
