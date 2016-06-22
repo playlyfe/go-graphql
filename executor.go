@@ -651,6 +651,40 @@ func (executor *Executor) PrintSchema() string {
 	return string(output)
 }
 
+// We use this function to capture any graphql errors that may have escaped capture within the request context.
+// This happens because we try to conform to the same behaviour as graphql-js with respect to handling errors on non-nullable fields
+func handleGQLError(result map[string]interface{}, err error) (map[string]interface{}, error) {
+	if gqlErr, ok := err.(*GraphQLError); ok {
+		errors, ok := result["errors"].([]map[string]interface{})
+		if !ok {
+			errors = []map[string]interface{}{}
+			result["errors"] = errors
+		}
+		gqlErrorData := map[string]interface{}{
+			"message": gqlErr.Message,
+		}
+		if gqlErr.Start != nil {
+			gqlErrorData["locations"] = []map[string]interface{}{
+				{
+					"line":   gqlErr.Start.Line,
+					"column": gqlErr.Start.Column,
+				},
+			}
+		}
+		if gqlErr.Field != nil {
+			gqlErrorData["locations"] = []map[string]interface{}{
+				{
+					"line":   gqlErr.Field.Name.LOC.Start.Line,
+					"column": gqlErr.Field.Name.LOC.Start.Column,
+				},
+			}
+		}
+		errors = append(errors, gqlErrorData)
+		return result, nil
+	}
+	return nil, err
+}
+
 func (executor *Executor) Execute(context interface{}, request string, variables map[string]interface{}, operationName string) (map[string]interface{}, error) {
 	parser := &Parser{}
 	result := map[string]interface{}{}
@@ -659,22 +693,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		Source: request,
 	})
 	if err != nil {
-		if gqlErr, ok := err.(*GraphQLError); ok {
-			result["errors"] = []map[string]interface{}{
-				{
-					"message": gqlErr.Message,
-					"locations": []map[string]interface{}{
-						{
-							"line":   gqlErr.Start.Line,
-							"column": gqlErr.Start.Column,
-						},
-					},
-				},
-			}
-			return result, nil
-		} else {
-			return nil, err
-		}
+		return handleGQLError(result, err)
 	}
 
 	reqCtx := &RequestContext{
@@ -706,7 +725,10 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 						Context:  reqCtx.AppContext,
 					}, operationDefinition.Operation)
 					if err != nil {
-						return nil, err
+						result, err = handleGQLError(result, err)
+						if err != nil {
+							return nil, err
+						}
 					}
 				}
 
@@ -714,14 +736,20 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
 					data, err := executor.selectionSet(reqCtx, true, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
-						return nil, err
+						result, err = handleGQLError(result, err)
+						if err != nil {
+							return nil, err
+						}
 					}
 					result["data"] = data
 				} else if operationDefinition.Operation == "mutation" {
 					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
 					data, err := executor.selectionSet(reqCtx, false, executor.Schema.MutationRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
 					if err != nil {
-						return nil, err
+						result, err = handleGQLError(result, err)
+						if err != nil {
+							return nil, err
+						}
 					}
 					result["data"] = data
 				}
@@ -737,11 +765,15 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 	}
 
 	if len(reqCtx.ErrorList.Errors) > 0 {
-		errs := []map[string]interface{}{}
-		for _, err := range reqCtx.ErrorList.Errors {
-			errs = append(errs, executor.ErrorHandler(err))
+		errors, ok := result["errors"].([]map[string]interface{})
+		if !ok {
+			errors = []map[string]interface{}{}
+			result["errors"] = errors
 		}
-		result["errors"] = errs
+		for _, err := range reqCtx.ErrorList.Errors {
+			errors = append(errors, executor.ErrorHandler(err))
+		}
+		result["errors"] = errors
 	}
 
 	if executor.After != nil {
