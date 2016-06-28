@@ -656,7 +656,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 	result := map[string]interface{}{}
 
 	document, err := parser.Parse(&ParseParams{
-		Source: request,
+		Source: []byte(request),
 	})
 	if err != nil {
 		if gqlErr, ok := err.(*GraphQLError); ok {

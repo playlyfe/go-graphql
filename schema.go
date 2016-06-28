@@ -178,7 +178,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	schema := &Schema{}
 	resolvers := map[string]interface{}{}
 	ast, err := parser.Parse(&ParseParams{
-		Source: schemaDefinition + INTROSPECTION_SCHEMA,
+		Source: []byte(schemaDefinition + INTROSPECTION_SCHEMA),
 	})
 	if err != nil {
 		return nil, nil, err
