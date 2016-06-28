@@ -1,7 +1,6 @@
 package language
 
 import (
-	"log"
 	"sync"
 )
 
@@ -9,31 +8,19 @@ type ASTNode interface {
 	Free()
 }
 
-var GlobalRefList = map[ASTNode]bool{}
-
 type Position struct {
 	Index  int
 	Line   int
 	Column int
-	ref    int
 }
 
-func (node *Position) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		//log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	PositionPool.Put(node)
-}
+func (node *Position) Free() { PositionPool.Put(node) }
 
 var PositionPool = &sync.Pool{New: func() interface{} { return &Position{} }}
 
-func NewPosition() *Position {
+func NewPosition(nodes map[ASTNode]bool) *Position {
 	node := PositionPool.Get().(*Position)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -44,24 +31,13 @@ type LOC struct {
 	ref    int
 }
 
-func (node *LOC) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		//log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Start.Free()
-	node.End.Free()
-	LOCPool.Put(node)
-}
+func (node *LOC) Free() { LOCPool.Put(node) }
 
 var LOCPool = &sync.Pool{New: func() interface{} { return &LOC{} }}
 
-func NewLOC() *LOC {
+func NewLOC(nodes map[ASTNode]bool) *LOC {
 	node := LOCPool.Get().(*LOC)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -83,25 +59,13 @@ type Document struct {
 	ref                  int
 }
 
-func (node *Document) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	for _, definition := range node.Definitions {
-		definition.Free()
-	}
-	DocumentPool.Put(node)
-}
+func (node *Document) Free() { DocumentPool.Put(node) }
 
 var DocumentPool = &sync.Pool{New: func() interface{} { return &Document{} }}
 
-func NewDocument() *Document {
+func NewDocument(nodes map[ASTNode]bool) *Document {
 	node := DocumentPool.Get().(*Document)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -117,33 +81,13 @@ type OperationDefinition struct {
 	ref                     int
 }
 
-func (node *OperationDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	if node.Name != nil {
-		node.Name.Free()
-	}
-	for _, variableDefinition := range node.VariableDefinitions {
-		variableDefinition.Free()
-	}
-	for _, directive := range node.Directives {
-		directive.Free()
-	}
-	node.SelectionSet.Free()
-	node.LOC.Free()
-	OperationDefinitionPool.Put(node)
-}
+func (node *OperationDefinition) Free() { OperationDefinitionPool.Put(node) }
 
 var OperationDefinitionPool = &sync.Pool{New: func() interface{} { return &OperationDefinition{} }}
 
-func NewOperationDefinition() *OperationDefinition {
+func NewOperationDefinition(nodes map[ASTNode]bool) *OperationDefinition {
 	node := OperationDefinitionPool.Get().(*OperationDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -153,26 +97,13 @@ type SelectionSet struct {
 	ref        int
 }
 
-func (node *SelectionSet) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	for _, selection := range node.Selections {
-		selection.Free()
-	}
-	node.LOC.Free()
-	SelectionSetPool.Put(node)
-}
+func (node *SelectionSet) Free() { SelectionSetPool.Put(node) }
 
 var SelectionSetPool = &sync.Pool{New: func() interface{} { return &SelectionSet{} }}
 
-func NewSelectionSet() *SelectionSet {
+func NewSelectionSet(nodes map[ASTNode]bool) *SelectionSet {
 	node := SelectionSetPool.Get().(*SelectionSet)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -267,28 +198,13 @@ type VariableDefinition struct {
 	ref          int
 }
 
-func (node *VariableDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Variable.Free()
-	node.Type.Free()
-	if node.DefaultValue != nil {
-		node.DefaultValue.Free()
-	}
-	node.LOC.Free()
-	VariableDefinitionPool.Put(node)
-}
+func (node *VariableDefinition) Free() { VariableDefinitionPool.Put(node) }
 
 var VariableDefinitionPool = &sync.Pool{New: func() interface{} { return &VariableDefinition{} }}
 
-func NewVariableDefinition() *VariableDefinition {
+func NewVariableDefinition(nodes map[ASTNode]bool) *VariableDefinition {
 	node := VariableDefinitionPool.Get().(*VariableDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -298,24 +214,13 @@ type Variable struct {
 	ref  int
 }
 
-func (node *Variable) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.LOC.Free()
-	VariablePool.Put(node)
-}
+func (node *Variable) Free() { VariablePool.Put(node) }
 
 var VariablePool = &sync.Pool{New: func() interface{} { return &Variable{} }}
 
-func NewVariable() *Variable {
+func NewVariable(nodes map[ASTNode]bool) *Variable {
 	node := VariablePool.Get().(*Variable)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -331,36 +236,13 @@ type Field struct {
 	ref            int
 }
 
-func (node *Field) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	if node.Alias != nil {
-		node.Alias.Free()
-	}
-	node.Name.Free()
-	for _, argument := range node.Arguments {
-		argument.Free()
-	}
-	for _, directive := range node.Directives {
-		directive.Free()
-	}
-	if node.SelectionSet != nil {
-		node.SelectionSet.Free()
-	}
-	node.LOC.Free()
-	FieldPool.Put(node)
-}
+func (node *Field) Free() { FieldPool.Put(node) }
 
 var FieldPool = &sync.Pool{New: func() interface{} { return &Field{} }}
 
-func NewField() *Field {
+func NewField(nodes map[ASTNode]bool) *Field {
 	node := FieldPool.Get().(*Field)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -373,32 +255,13 @@ type InlineFragment struct {
 	ref            int
 }
 
-func (node *InlineFragment) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	if node.TypeCondition != nil {
-		node.TypeCondition.Free()
-	}
-	for _, directive := range node.Directives {
-		directive.Free()
-	}
-	if node.SelectionSet != nil {
-		node.SelectionSet.Free()
-	}
-	node.LOC.Free()
-	InlineFragmentPool.Put(node)
-}
+func (node *InlineFragment) Free() { InlineFragmentPool.Put(node) }
 
 var InlineFragmentPool = &sync.Pool{New: func() interface{} { return &InlineFragment{} }}
 
-func NewInlineFragment() *InlineFragment {
+func NewInlineFragment(nodes map[ASTNode]bool) *InlineFragment {
 	node := InlineFragmentPool.Get().(*InlineFragment)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -410,27 +273,13 @@ type FragmentSpread struct {
 	ref            int
 }
 
-func (node *FragmentSpread) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, directive := range node.Directives {
-		directive.Free()
-	}
-	node.LOC.Free()
-	FragmentSpreadPool.Put(node)
-}
+func (node *FragmentSpread) Free() { FragmentSpreadPool.Put(node) }
 
 var FragmentSpreadPool = &sync.Pool{New: func() interface{} { return &FragmentSpread{} }}
 
-func NewFragmentSpread() *FragmentSpread {
+func NewFragmentSpread(nodes map[ASTNode]bool) *FragmentSpread {
 	node := FragmentSpreadPool.Get().(*FragmentSpread)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -444,29 +293,13 @@ type FragmentDefinition struct {
 	ref            int
 }
 
-func (node *FragmentDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.TypeCondition.Free()
-	for _, directive := range node.Directives {
-		directive.Free()
-	}
-	node.SelectionSet.Free()
-	node.LOC.Free()
-	FragmentDefinitionPool.Put(node)
-}
+func (node *FragmentDefinition) Free() { FragmentDefinitionPool.Put(node) }
 
 var FragmentDefinitionPool = &sync.Pool{New: func() interface{} { return &FragmentDefinition{} }}
 
-func NewFragmentDefinition() *FragmentDefinition {
+func NewFragmentDefinition(nodes map[ASTNode]bool) *FragmentDefinition {
 	node := FragmentDefinitionPool.Get().(*FragmentDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -477,23 +310,13 @@ type Literal struct {
 	ref   int
 }
 
-func (node *Literal) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	LiteralPool.Put(node)
-}
+func (node *Literal) Free() { LiteralPool.Put(node) }
 
 var LiteralPool = &sync.Pool{New: func() interface{} { return &Literal{} }}
 
-func NewLiteral() *Literal {
+func NewLiteral(nodes map[ASTNode]bool) *Literal {
 	node := LiteralPool.Get().(*Literal)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -503,26 +326,13 @@ type List struct {
 	ref    int
 }
 
-func (node *List) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	for _, value := range node.Values {
-		value.Free()
-	}
-	node.LOC.Free()
-	ListPool.Put(node)
-}
+func (node *List) Free() { ListPool.Put(node) }
 
 var ListPool = &sync.Pool{New: func() interface{} { return &List{} }}
 
-func NewList() *List {
+func NewList(nodes map[ASTNode]bool) *List {
 	node := ListPool.Get().(*List)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -533,26 +343,13 @@ type Object struct {
 	ref        int
 }
 
-func (node *Object) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	for _, field := range node.Fields {
-		field.Free()
-	}
-	node.LOC.Free()
-	ObjectPool.Put(node)
-}
+func (node *Object) Free() { ObjectPool.Put(node) }
 
 var ObjectPool = &sync.Pool{New: func() interface{} { return &Object{} }}
 
-func NewObject() *Object {
+func NewObject(nodes map[ASTNode]bool) *Object {
 	node := ObjectPool.Get().(*Object)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -563,25 +360,13 @@ type ObjectField struct {
 	ref   int
 }
 
-func (node *ObjectField) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.Value.Free()
-	node.LOC.Free()
-	ObjectFieldPool.Put(node)
-}
+func (node *ObjectField) Free() { ObjectFieldPool.Put(node) }
 
 var ObjectFieldPool = &sync.Pool{New: func() interface{} { return &ObjectField{} }}
 
-func NewObjectField() *ObjectField {
+func NewObjectField(nodes map[ASTNode]bool) *ObjectField {
 	node := ObjectFieldPool.Get().(*ObjectField)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -591,24 +376,13 @@ type ListType struct {
 	ref  int
 }
 
-func (node *ListType) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Type.Free()
-	node.LOC.Free()
-	ListTypePool.Put(node)
-}
+func (node *ListType) Free() { ListTypePool.Put(node) }
 
 var ListTypePool = &sync.Pool{New: func() interface{} { return &ListType{} }}
 
-func NewListType() *ListType {
+func NewListType(nodes map[ASTNode]bool) *ListType {
 	node := ListTypePool.Get().(*ListType)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -618,24 +392,13 @@ type NonNullType struct {
 	ref  int
 }
 
-func (node *NonNullType) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Type.Free()
-	node.LOC.Free()
-	NonNullTypePool.Put(node)
-}
+func (node *NonNullType) Free() { NonNullTypePool.Put(node) }
 
 var NonNullTypePool = &sync.Pool{New: func() interface{} { return &NonNullType{} }}
 
-func NewNonNullType() *NonNullType {
+func NewNonNullType(nodes map[ASTNode]bool) *NonNullType {
 	node := NonNullTypePool.Get().(*NonNullType)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -645,25 +408,13 @@ type Name struct {
 	ref   int
 }
 
-func (node *Name) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	if node.LOC != nil {
-		node.LOC.Free()
-	}
-	NamePool.Put(node)
-}
+func (node *Name) Free() { NamePool.Put(node) }
 
 var NamePool = &sync.Pool{New: func() interface{} { return &Name{} }}
 
-func NewName() *Name {
+func NewName(nodes map[ASTNode]bool) *Name {
 	node := NamePool.Get().(*Name)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -673,24 +424,13 @@ type NamedType struct {
 	ref  int
 }
 
-func (node *NamedType) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.LOC.Free()
-	NamedTypePool.Put(node)
-}
+func (node *NamedType) Free() { NamedTypePool.Put(node) }
 
 var NamedTypePool = &sync.Pool{New: func() interface{} { return &NamedType{} }}
 
-func NewNamedType() *NamedType {
+func NewNamedType(nodes map[ASTNode]bool) *NamedType {
 	node := NamedTypePool.Get().(*NamedType)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -702,27 +442,13 @@ type Directive struct {
 	ref           int
 }
 
-func (node *Directive) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, argument := range node.Arguments {
-		argument.Free()
-	}
-	node.LOC.Free()
-	DirectivePool.Put(node)
-}
+func (node *Directive) Free() { DirectivePool.Put(node) }
 
 var DirectivePool = &sync.Pool{New: func() interface{} { return &Directive{} }}
 
-func NewDirective() *Directive {
+func NewDirective(nodes map[ASTNode]bool) *Directive {
 	node := DirectivePool.Get().(*Directive)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -733,25 +459,13 @@ type Argument struct {
 	ref   int
 }
 
-func (node *Argument) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.Value.Free()
-	node.LOC.Free()
-	ArgumentPool.Put(node)
-}
+func (node *Argument) Free() { ArgumentPool.Put(node) }
 
 var ArgumentPool = &sync.Pool{New: func() interface{} { return &Argument{} }}
 
-func NewArgument() *Argument {
+func NewArgument(nodes map[ASTNode]bool) *Argument {
 	node := ArgumentPool.Get().(*Argument)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -761,23 +475,13 @@ type Int struct {
 	ref   int
 }
 
-func (node *Int) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	IntPool.Put(node)
-}
+func (node *Int) Free() { IntPool.Put(node) }
 
 var IntPool = &sync.Pool{New: func() interface{} { return &Int{} }}
 
-func NewInt() *Int {
+func NewInt(nodes map[ASTNode]bool) *Int {
 	node := IntPool.Get().(*Int)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -787,23 +491,13 @@ type Float struct {
 	ref   int
 }
 
-func (node *Float) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	FloatPool.Put(node)
-}
+func (node *Float) Free() { FloatPool.Put(node) }
 
 var FloatPool = &sync.Pool{New: func() interface{} { return &Float{} }}
 
-func NewFloat() *Float {
+func NewFloat(nodes map[ASTNode]bool) *Float {
 	node := FloatPool.Get().(*Float)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -813,23 +507,13 @@ type String struct {
 	ref   int
 }
 
-func (node *String) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	StringPool.Put(node)
-}
+func (node *String) Free() { StringPool.Put(node) }
 
 var StringPool = &sync.Pool{New: func() interface{} { return &String{} }}
 
-func NewString() *String {
+func NewString(nodes map[ASTNode]bool) *String {
 	node := StringPool.Get().(*String)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -839,23 +523,13 @@ type Boolean struct {
 	ref   int
 }
 
-func (node *Boolean) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	BooleanPool.Put(node)
-}
+func (node *Boolean) Free() { BooleanPool.Put(node) }
 
 var BooleanPool = &sync.Pool{New: func() interface{} { return &Boolean{} }}
 
-func NewBoolean() *Boolean {
+func NewBoolean(nodes map[ASTNode]bool) *Boolean {
 	node := BooleanPool.Get().(*Boolean)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -865,23 +539,13 @@ type Enum struct {
 	ref   int
 }
 
-func (node *Enum) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.LOC.Free()
-	EnumPool.Put(node)
-}
+func (node *Enum) Free() { EnumPool.Put(node) }
 
 var EnumPool = &sync.Pool{New: func() interface{} { return &Enum{} }}
 
-func NewEnum() *Enum {
+func NewEnum(nodes map[ASTNode]bool) *Enum {
 	node := EnumPool.Get().(*Enum)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -895,30 +559,13 @@ type ObjectTypeDefinition struct {
 	ref         int
 }
 
-func (node *ObjectTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, interfac := range node.Interfaces {
-		interfac.Free()
-	}
-	for _, field := range node.Fields {
-		field.Free()
-	}
-	node.LOC.Free()
-	ObjectTypeDefinitionPool.Put(node)
-}
+func (node *ObjectTypeDefinition) Free() { ObjectTypeDefinitionPool.Put(node) }
 
 var ObjectTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &ObjectTypeDefinition{} }}
 
-func NewObjectTypeDefinition() *ObjectTypeDefinition {
+func NewObjectTypeDefinition(nodes map[ASTNode]bool) *ObjectTypeDefinition {
 	node := ObjectTypeDefinitionPool.Get().(*ObjectTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -934,28 +581,13 @@ type FieldDefinition struct {
 	ref               int
 }
 
-func (node *FieldDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, argument := range node.Arguments {
-		argument.Free()
-	}
-	node.Type.Free()
-	node.LOC.Free()
-	FieldDefinitionPool.Put(node)
-}
+func (node *FieldDefinition) Free() { FieldDefinitionPool.Put(node) }
 
 var FieldDefinitionPool = &sync.Pool{New: func() interface{} { return &FieldDefinition{} }}
 
-func NewFieldDefinition() *FieldDefinition {
+func NewFieldDefinition(nodes map[ASTNode]bool) *FieldDefinition {
 	node := FieldDefinitionPool.Get().(*FieldDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -968,28 +600,13 @@ type InputValueDefinition struct {
 	ref          int
 }
 
-func (node *InputValueDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.Type.Free()
-	if node.DefaultValue != nil {
-		node.DefaultValue.Free()
-	}
-	node.LOC.Free()
-	InputValueDefinitionPool.Put(node)
-}
+func (node *InputValueDefinition) Free() { InputValueDefinitionPool.Put(node) }
 
 var InputValueDefinitionPool = &sync.Pool{New: func() interface{} { return &InputValueDefinition{} }}
 
-func NewInputValueDefinition() *InputValueDefinition {
+func NewInputValueDefinition(nodes map[ASTNode]bool) *InputValueDefinition {
 	node := InputValueDefinitionPool.Get().(*InputValueDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1001,27 +618,13 @@ type InterfaceTypeDefinition struct {
 	ref         int
 }
 
-func (node *InterfaceTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, field := range node.Fields {
-		field.Free()
-	}
-	node.LOC.Free()
-	InterfaceTypeDefinitionPool.Put(node)
-}
+func (node *InterfaceTypeDefinition) Free() { InterfaceTypeDefinitionPool.Put(node) }
 
 var InterfaceTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &InterfaceTypeDefinition{} }}
 
-func NewInterfaceTypeDefinition() *InterfaceTypeDefinition {
+func NewInterfaceTypeDefinition(nodes map[ASTNode]bool) *InterfaceTypeDefinition {
 	node := InterfaceTypeDefinitionPool.Get().(*InterfaceTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1033,27 +636,13 @@ type UnionTypeDefinition struct {
 	ref         int
 }
 
-func (node *UnionTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, typ := range node.Types {
-		typ.Free()
-	}
-	node.LOC.Free()
-	UnionTypeDefinitionPool.Put(node)
-}
+func (node *UnionTypeDefinition) Free() { UnionTypeDefinitionPool.Put(node) }
 
 var UnionTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &UnionTypeDefinition{} }}
 
-func NewUnionTypeDefinition() *UnionTypeDefinition {
+func NewUnionTypeDefinition(nodes map[ASTNode]bool) *UnionTypeDefinition {
 	node := UnionTypeDefinitionPool.Get().(*UnionTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1064,24 +653,13 @@ type ScalarTypeDefinition struct {
 	ref         int
 }
 
-func (node *ScalarTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.LOC.Free()
-	ScalarTypeDefinitionPool.Put(node)
-}
+func (node *ScalarTypeDefinition) Free() { ScalarTypeDefinitionPool.Put(node) }
 
 var ScalarTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &ScalarTypeDefinition{} }}
 
-func NewScalarTypeDefinition() *ScalarTypeDefinition {
+func NewScalarTypeDefinition(nodes map[ASTNode]bool) *ScalarTypeDefinition {
 	node := ScalarTypeDefinitionPool.Get().(*ScalarTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1093,27 +671,13 @@ type EnumTypeDefinition struct {
 	ref         int
 }
 
-func (node *EnumTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, value := range node.Values {
-		value.Free()
-	}
-	node.LOC.Free()
-	EnumTypeDefinitionPool.Put(node)
-}
+func (node *EnumTypeDefinition) Free() { EnumTypeDefinitionPool.Put(node) }
 
 var EnumTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &EnumTypeDefinition{} }}
 
-func NewEnumTypeDefinition() *EnumTypeDefinition {
+func NewEnumTypeDefinition(nodes map[ASTNode]bool) *EnumTypeDefinition {
 	node := EnumTypeDefinitionPool.Get().(*EnumTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1126,24 +690,13 @@ type EnumValueDefinition struct {
 	ref               int
 }
 
-func (node *EnumValueDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	node.LOC.Free()
-	EnumTypeDefinitionPool.Put(node)
-}
+func (node *EnumValueDefinition) Free() { EnumTypeDefinitionPool.Put(node) }
 
 var EnumValueDefinitionPool = &sync.Pool{New: func() interface{} { return &EnumValueDefinition{} }}
 
-func NewEnumValueDefinition() *EnumValueDefinition {
+func NewEnumValueDefinition(nodes map[ASTNode]bool) *EnumValueDefinition {
 	node := EnumValueDefinitionPool.Get().(*EnumValueDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1156,27 +709,13 @@ type InputObjectTypeDefinition struct {
 	ref         int
 }
 
-func (node *InputObjectTypeDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Name.Free()
-	for _, field := range node.Fields {
-		field.Free()
-	}
-	node.LOC.Free()
-	InputObjectTypeDefinitionPool.Put(node)
-}
+func (node *InputObjectTypeDefinition) Free() { InputObjectTypeDefinitionPool.Put(node) }
 
 var InputObjectTypeDefinitionPool = &sync.Pool{New: func() interface{} { return &InputObjectTypeDefinition{} }}
 
-func NewInputObjectTypeDefinition() *InputObjectTypeDefinition {
+func NewInputObjectTypeDefinition(nodes map[ASTNode]bool) *InputObjectTypeDefinition {
 	node := InputObjectTypeDefinitionPool.Get().(*InputObjectTypeDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }
 
@@ -1187,23 +726,12 @@ type TypeExtensionDefinition struct {
 	ref         int
 }
 
-func (node *TypeExtensionDefinition) Free() {
-	if node.ref > 0 {
-		node.ref--
-	} else {
-		node.ref--
-		log.Printf("%#v\n freed multiple times (%d extra times)", node, -node.ref)
-		return
-	}
-	node.Definition.Free()
-	node.LOC.Free()
-	TypeExtensionDefinitionPool.Put(node)
-}
+func (node *TypeExtensionDefinition) Free() { TypeExtensionDefinitionPool.Put(node) }
 
 var TypeExtensionDefinitionPool = &sync.Pool{New: func() interface{} { return &TypeExtensionDefinition{} }}
 
-func NewTypeExtensionDefinition() *TypeExtensionDefinition {
+func NewTypeExtensionDefinition(nodes map[ASTNode]bool) *TypeExtensionDefinition {
 	node := TypeExtensionDefinitionPool.Get().(*TypeExtensionDefinition)
-	node.ref = 1
+	nodes[node] = true
 	return node
 }

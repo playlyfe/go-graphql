@@ -755,7 +755,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 			return nil, err
 		}
 	}
-	document.Free()
+	parser.Flush()
 	return result, nil
 }
 
