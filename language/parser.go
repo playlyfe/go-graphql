@@ -82,18 +82,15 @@ func (parser *Parser) value() (ASTNode, error) {
 }
 
 func (parser *Parser) loc(start *Position) *LOC {
+	node := NewLOC()
+	node.Start = start
+	node.End = parser.prevEnd
 	if parser.noSource {
-		return &LOC{
-			Start: start,
-			End:   parser.prevEnd,
-		}
+		node.Source = ""
 	} else {
-		return &LOC{
-			Start:  start,
-			End:    parser.prevEnd,
-			Source: parser.source,
-		}
+		node.Source = parser.source
 	}
+	return node
 }
 
 func (parser *Parser) name() (*Name, error) {
@@ -102,10 +99,10 @@ func (parser *Parser) name() (*Name, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Name{
-		Value: token.Val,
-		LOC:   parser.loc(token.Start),
-	}, nil
+	node := NewName()
+	node.Value = token.Val
+	node.LOC = parser.loc(token.Start)
+	return node, nil
 }
 
 func (parser *Parser) description() (string, error) {
@@ -231,21 +228,20 @@ func (parser *Parser) document() (*Document, error) {
 	if len(typeIndex) == 0 {
 		typeIndex = nil
 	}
-
-	return &Document{
-		Definitions:          definitions,
-		FragmentIndex:        fragmentIndex,
-		ObjectTypeIndex:      objectTypeIndex,
-		TypeExtensionIndex:   typeExtensionIndex,
-		InterfaceTypeIndex:   interfaceTypeIndex,
-		UnionTypeIndex:       unionTypeIndex,
-		InputObjectTypeIndex: inputObjectTypeIndex,
-		ScalarTypeIndex:      scalarTypeIndex,
-		EnumTypeIndex:        enumTypeIndex,
-		PossibleTypesIndex:   possibleTypesIndex,
-		TypeIndex:            typeIndex,
-		LOC:                  parser.loc(start),
-	}, nil
+	document := NewDocument()
+	document.Definitions = definitions
+	document.FragmentIndex = fragmentIndex
+	document.ObjectTypeIndex = objectTypeIndex
+	document.TypeExtensionIndex = typeExtensionIndex
+	document.InterfaceTypeIndex = interfaceTypeIndex
+	document.UnionTypeIndex = unionTypeIndex
+	document.InputObjectTypeIndex = inputObjectTypeIndex
+	document.ScalarTypeIndex = scalarTypeIndex
+	document.EnumTypeIndex = enumTypeIndex
+	document.PossibleTypesIndex = possibleTypesIndex
+	document.TypeIndex = typeIndex
+	document.LOC = parser.loc(start)
+	return document, nil
 }
 
 /**
@@ -306,13 +302,18 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &OperationDefinition{
-			Operation:    "query",
-			SelectionSet: selectionSet,
-			LOC:          parser.loc(start),
-		}, nil
+		node := NewOperationDefinition()
+		node.Operation = "query"
+		node.Name = nil
+		node.VariableDefinitions = nil
+		node.VariableDefinitionIndex = nil
+		node.Directives = nil
+		node.DirectiveIndex = nil
+		node.SelectionSet = selectionSet
+		node.LOC = parser.loc(start)
+		return node, nil
 	case NAME:
-		node := &OperationDefinition{}
+		node := NewOperationDefinition()
 		node.Operation = parser.lookahead.Val
 		err := parser.matchName(parser.lookahead.Val)
 		if err != nil {
@@ -323,18 +324,26 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			node.Name = nil
 		}
 		if parser.lookahead.Type == LPAREN {
 			node.VariableDefinitions, node.VariableDefinitionIndex, err = parser.variableDefinitions()
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			node.VariableDefinitions = nil
+			node.VariableDefinitionIndex = nil
 		}
 		if parser.lookahead.Type == AT {
 			node.Directives, node.DirectiveIndex, err = parser.directives()
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			node.Directives = nil
+			node.DirectiveIndex = nil
 		}
 		node.SelectionSet, err = parser.selectionSet()
 		if err != nil {
@@ -389,7 +398,7 @@ func (parser *Parser) variableDefinitions() ([]*VariableDefinition, map[string]*
 func (parser *Parser) variableDefinition() (*VariableDefinition, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &VariableDefinition{}
+	node := NewVariableDefinition()
 	node.Variable, err = parser.variable()
 	if err != nil {
 		return nil, err
@@ -411,6 +420,8 @@ func (parser *Parser) variableDefinition() (*VariableDefinition, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.DefaultValue = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -422,7 +433,7 @@ func (parser *Parser) variableDefinition() (*VariableDefinition, error) {
 func (parser *Parser) variable() (*Variable, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &Variable{}
+	node := NewVariable()
 	err = parser.match(DOLLAR)
 	if err != nil {
 		return nil, err
@@ -440,7 +451,8 @@ func (parser *Parser) variable() (*Variable, error) {
  */
 func (parser *Parser) selectionSet() (*SelectionSet, error) {
 	start := parser.lookahead.Start
-	node := &SelectionSet{}
+	node := NewSelectionSet()
+	node.Selections = []ASTNode{}
 	err := parser.match(LBRACE)
 	if err != nil {
 		return nil, err
@@ -492,7 +504,7 @@ func (parser *Parser) selection() (ASTNode, error) {
 func (parser *Parser) field() (*Field, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &Field{}
+	node := NewField()
 	nameOrAlias, err := parser.name()
 	if err != nil {
 		return nil, err
@@ -508,6 +520,7 @@ func (parser *Parser) field() (*Field, error) {
 			return nil, err
 		}
 	} else {
+		node.Alias = nil
 		node.Name = nameOrAlias
 	}
 	if parser.lookahead.Type == LPAREN {
@@ -515,18 +528,26 @@ func (parser *Parser) field() (*Field, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Arguments = nil
+		node.ArgumentIndex = nil
 	}
 	if parser.lookahead.Type == AT {
 		node.Directives, node.DirectiveIndex, err = parser.directives()
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Directives = nil
+		node.DirectiveIndex = nil
 	}
 	if parser.lookahead.Type == LBRACE {
 		node.SelectionSet, err = parser.selectionSet()
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.SelectionSet = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -566,7 +587,7 @@ func (parser *Parser) arguments() ([]*Argument, map[string]*Argument, error) {
 func (parser *Parser) argument() (*Argument, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &Argument{}
+	node := NewArgument()
 	node.Name, err = parser.name()
 	if err != nil {
 		return nil, err
@@ -597,7 +618,7 @@ func (parser *Parser) fragment() (ASTNode, error) {
 		return nil, err
 	}
 	if parser.lookahead.Type == NAME && parser.lookahead.Val != "on" {
-		node := &FragmentSpread{}
+		node := NewFragmentSpread()
 		node.Name, err = parser.fragmentName()
 		if err != nil {
 			return nil, err
@@ -607,11 +628,14 @@ func (parser *Parser) fragment() (ASTNode, error) {
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			node.Directives = nil
+			node.DirectiveIndex = nil
 		}
 		node.LOC = parser.loc(start)
 		return node, nil
 	}
-	node := &InlineFragment{}
+	node := NewInlineFragment()
 	if parser.lookahead.Val == "on" {
 		err = parser.match(NAME)
 		if err != nil {
@@ -621,18 +645,25 @@ func (parser *Parser) fragment() (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.TypeCondition = nil
 	}
 	if parser.lookahead.Type == AT {
 		node.Directives, node.DirectiveIndex, err = parser.directives()
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Directives = nil
+		node.DirectiveIndex = nil
 	}
 	if parser.lookahead.Type == LBRACE {
 		node.SelectionSet, err = parser.selectionSet()
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.SelectionSet = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -650,7 +681,7 @@ func (parser *Parser) fragmentDefinition() (*FragmentDefinition, error) {
 	if err != nil {
 		return nil, err
 	}
-	node := &FragmentDefinition{}
+	node := NewFragmentDefinition()
 	node.Name, err = parser.fragmentName()
 	if err != nil {
 		return nil, err
@@ -668,6 +699,9 @@ func (parser *Parser) fragmentDefinition() (*FragmentDefinition, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Directives = nil
+		node.DirectiveIndex = nil
 	}
 	node.SelectionSet, err = parser.selectionSet()
 	if err != nil {
@@ -724,10 +758,10 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Int{
-			Value: int32(val),
-			LOC:   parser.loc(start),
-		}, nil
+		node := NewInt()
+		node.Value = int32(val)
+		node.LOC = parser.loc(start)
+		return node, nil
 	case FLOAT:
 		token := parser.lookahead
 		err := parser.match(FLOAT)
@@ -738,20 +772,20 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Float{
-			Value: float32(val),
-			LOC:   parser.loc(start),
-		}, nil
+		node := NewFloat()
+		node.Value = float32(val)
+		node.LOC = parser.loc(start)
+		return node, nil
 	case STRING:
 		token := parser.lookahead
 		err := parser.match(STRING)
 		if err != nil {
 			return nil, err
 		}
-		return &String{
-			Value: token.Val,
-			LOC:   parser.loc(start),
-		}, nil
+		node := NewString()
+		node.Value = token.Val
+		node.LOC = parser.loc(start)
+		return node, nil
 	case NAME:
 		token := parser.lookahead
 		err := parser.match(NAME)
@@ -759,15 +793,15 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 			return nil, err
 		}
 		if token.Val == "true" {
-			return &Boolean{
-				Value: true,
-				LOC:   parser.loc(start),
-			}, nil
+			node := NewBoolean()
+			node.Value = true
+			node.LOC = parser.loc(start)
+			return node, nil
 		} else if token.Val == "false" {
-			return &Boolean{
-				Value: false,
-				LOC:   parser.loc(start),
-			}, nil
+			node := NewBoolean()
+			node.Value = false
+			node.LOC = parser.loc(start)
+			return node, nil
 		}
 		if token.Val == "true" || token.Val == "false" || token.Val == "null" {
 			return nil, &GraphQLError{
@@ -777,10 +811,10 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 				End:     token.End,
 			}
 		} else {
-			return &Enum{
-				Value: token.Val,
-				LOC:   parser.loc(start),
-			}, nil
+			node := NewEnum()
+			node.Value = token.Val
+			node.LOC = parser.loc(start)
+			return node, nil
 		}
 	case DOLLAR:
 		if !isConstant {
@@ -812,7 +846,8 @@ func (parser *Parser) valueValue() (ASTNode, error) {
  */
 func (parser *Parser) list(isConstant bool) (*List, error) {
 	start := parser.lookahead.Start
-	node := &List{}
+	node := NewList()
+	node.Values = []ASTNode{}
 	err := parser.match(LBRACK)
 	if err != nil {
 		return nil, err
@@ -851,7 +886,8 @@ func (parser *Parser) object(isConstant bool) (*Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	node := &Object{}
+	node := NewObject()
+	node.Fields = []*ObjectField{}
 	fieldIndex := map[string]*ObjectField{}
 	for parser.lookahead.Type != RBRACE {
 		field, err := parser.objectField(isConstant)
@@ -867,6 +903,9 @@ func (parser *Parser) object(isConstant bool) (*Object, error) {
 	}
 	if len(node.Fields) > 0 {
 		node.FieldIndex = fieldIndex
+	} else {
+		node.Fields = nil
+		node.FieldIndex = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -921,7 +960,7 @@ func (parser *Parser) directives() ([]*Directive, map[string]*Directive, error) 
  */
 func (parser *Parser) directive() (*Directive, error) {
 	start := parser.lookahead.Start
-	node := &Directive{}
+	node := NewDirective()
 	err := parser.match(AT)
 	if err != nil {
 		return nil, err
@@ -935,6 +974,9 @@ func (parser *Parser) directive() (*Directive, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Arguments = nil
+		node.ArgumentIndex = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -955,7 +997,7 @@ func (parser *Parser) type_() (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		list := &ListType{}
+		list := NewListType()
 		list.Type, err = parser.type_()
 		if err != nil {
 			return nil, err
@@ -978,10 +1020,10 @@ func (parser *Parser) type_() (ASTNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &NonNullType{
-			Type: node,
-			LOC:  parser.loc(start),
-		}, nil
+		nntype := NewNonNullType()
+		nntype.Type = node
+		nntype.LOC = parser.loc(start)
+		return nntype, nil
 	}
 	return node, nil
 }
@@ -992,7 +1034,7 @@ func (parser *Parser) type_() (ASTNode, error) {
 func (parser *Parser) namedType() (*NamedType, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &NamedType{}
+	node := NewNamedType()
 	node.Name, err = parser.name()
 	if err != nil {
 		return nil, err
@@ -1040,9 +1082,8 @@ func (parser *Parser) typeDefinition(description string) (ASTNode, error) {
 func (parser *Parser) objectTypeDefinition(description string) (*ObjectTypeDefinition, error) {
 	var err error
 	start := parser.lookahead.Start
-	node := &ObjectTypeDefinition{
-		Description: description,
-	}
+	node := NewObjectTypeDefinition()
+	node.Description = description
 
 	err = parser.matchName("type")
 	if err != nil {
@@ -1057,6 +1098,8 @@ func (parser *Parser) objectTypeDefinition(description string) (*ObjectTypeDefin
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Interfaces = nil
 	}
 
 	err = parser.match(LBRACE)
@@ -1080,6 +1123,9 @@ func (parser *Parser) objectTypeDefinition(description string) (*ObjectTypeDefin
 	if len(fieldIndex) > 0 {
 		node.FieldIndex = fieldIndex
 		node.Fields = fields
+	} else {
+		node.Fields = nil
+		node.FieldIndex = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -1112,7 +1158,7 @@ func (parser *Parser) implementsInterfaces() ([]*NamedType, error) {
  */
 func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 	var err error
-	node := &FieldDefinition{}
+	node := NewFieldDefinition()
 	start := parser.lookahead.Start
 	node.Description, err = parser.description()
 	if err != nil {
@@ -1127,6 +1173,9 @@ func (parser *Parser) fieldDefinition() (*FieldDefinition, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.Arguments = nil
+		node.ArgumentIndex = nil
 	}
 	err = parser.match(COLON)
 	if err != nil {
@@ -1174,7 +1223,7 @@ func (parser *Parser) argumentDefs(node *FieldDefinition) ([]*InputValueDefiniti
  */
 func (parser *Parser) inputValueDef() (*InputValueDefinition, error) {
 	var err error
-	node := &InputValueDefinition{}
+	node := NewInputValueDefinition()
 	start := parser.lookahead.Start
 
 	node.Description, err = parser.description()
@@ -1202,6 +1251,8 @@ func (parser *Parser) inputValueDef() (*InputValueDefinition, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		node.DefaultValue = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -1212,9 +1263,8 @@ func (parser *Parser) inputValueDef() (*InputValueDefinition, error) {
  */
 func (parser *Parser) interfaceTypeDefinition(description string) (*InterfaceTypeDefinition, error) {
 	var err error
-	node := &InterfaceTypeDefinition{
-		Description: description,
-	}
+	node := NewInterfaceTypeDefinition()
+	node.Description = description
 	start := parser.lookahead.Start
 	err = parser.matchName("interface")
 	if err != nil {
@@ -1250,9 +1300,9 @@ func (parser *Parser) interfaceTypeDefinition(description string) (*InterfaceTyp
  */
 func (parser *Parser) unionTypeDefinition(description string) (*UnionTypeDefinition, error) {
 	var err error
-	node := &UnionTypeDefinition{
-		Description: description,
-	}
+	node := NewUnionTypeDefinition()
+	node.Description = description
+
 	start := parser.lookahead.Start
 	err = parser.matchName("union")
 	if err != nil {
@@ -1303,9 +1353,9 @@ func (parser *Parser) unionMembers() ([]*NamedType, error) {
  * ScalarTypeDefinition : scalar Name
  */
 func (parser *Parser) scalarTypeDefinition(description string) (*ScalarTypeDefinition, error) {
-	node := &ScalarTypeDefinition{
-		Description: description,
-	}
+	node := NewScalarTypeDefinition()
+	node.Description = description
+
 	start := parser.lookahead.Start
 	err := parser.matchName("scalar")
 	if err != nil {
@@ -1323,9 +1373,10 @@ func (parser *Parser) scalarTypeDefinition(description string) (*ScalarTypeDefin
  * EnumTypeDefinition : enum Name { EnumValueDefinition+ }
  */
 func (parser *Parser) enumTypeDefinition(description string) (*EnumTypeDefinition, error) {
-	node := &EnumTypeDefinition{
-		Description: description,
-	}
+	node := NewEnumTypeDefinition()
+	node.Values = []*EnumValueDefinition{}
+	node.Description = description
+
 	start := parser.lookahead.Start
 	err := parser.matchName("enum")
 	if err != nil {
@@ -1364,7 +1415,7 @@ func (parser *Parser) enumTypeDefinition(description string) (*EnumTypeDefinitio
  */
 func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
 	var err error
-	node := &EnumValueDefinition{}
+	node := NewEnumValueDefinition()
 	start := parser.lookahead.Start
 	if parser.lookahead.Val == "true" || parser.lookahead.Val == "false" || parser.lookahead.Val == "null" {
 		return nil, &GraphQLError{
@@ -1386,9 +1437,10 @@ func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
  * InputObjectTypeDefinition : input Name { InputValueDefinition+ }
  */
 func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjectTypeDefinition, error) {
-	node := &InputObjectTypeDefinition{
-		Description: description,
-	}
+	node := NewInputObjectTypeDefinition()
+	node.Fields = []*InputValueDefinition{}
+	node.Description = description
+
 	fieldIndex := map[string]*InputValueDefinition{}
 	start := parser.lookahead.Start
 	err := parser.matchName("input")
@@ -1417,6 +1469,9 @@ func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjec
 	}
 	if len(node.Fields) > 0 {
 		node.FieldIndex = fieldIndex
+	} else {
+		node.Fields = nil
+		node.FieldIndex = nil
 	}
 	node.LOC = parser.loc(start)
 	return node, nil
@@ -1426,9 +1481,9 @@ func (parser *Parser) inputObjectTypeDefinition(description string) (*InputObjec
  * TypeExtensionDefinition : extend ObjectTypeDefinition
  */
 func (parser *Parser) typeExtensionDefinition(description string) (*TypeExtensionDefinition, error) {
-	node := &TypeExtensionDefinition{
-		Description: description,
-	}
+	node := NewTypeExtensionDefinition()
+	node.Description = description
+
 	start := parser.lookahead.Start
 	err := parser.matchName("extend")
 	if err != nil {

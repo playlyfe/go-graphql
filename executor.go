@@ -3,11 +3,11 @@ package graphql
 import (
 	"encoding/json"
 	"fmt"
+	//"log"
 	"math"
 	"reflect"
 	"runtime/debug"
 	"strings"
-	//"log"
 
 	. "github.com/playlyfe/go-graphql/language"
 	"github.com/playlyfe/go-graphql/utils"
@@ -755,7 +755,7 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 			return nil, err
 		}
 	}
-
+	document.Free()
 	return result, nil
 }
 
@@ -774,6 +774,7 @@ func (executor *Executor) collectFields(reqCtx *RequestContext, objectType *Obje
 	groupedFieldIndex := map[string]*GroupedField{}
 	groupedFields := []*GroupedField{}
 	for _, item := range selectionSet.Selections {
+		//log.Printf("%#v\n", item)
 		// if skipDirective's if argument is true then continue
 		// if includeDirective's if argument is false then continue
 		switch selection := item.(type) {
