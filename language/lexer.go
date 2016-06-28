@@ -1,9 +1,9 @@
 package language
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -11,6 +11,15 @@ import (
 type StateFn func(*Lexer) StateFn
 
 type TokenType int
+
+var SpreadString = []byte("..")
+var CommentString = []byte("##")
+var DigitsString = []byte("0123456789")
+var HexString = []byte("0123456789abcdefABCDEF")
+var NumberPrefixString = []byte("+-")
+var NumberExponentString = []byte("eE")
+var DecimalString = []byte(".")
+var ZeroString = []byte("0")
 
 const (
 	// Special tokens
@@ -139,7 +148,7 @@ func (token Token) String() string {
 }
 
 type Lexer struct {
-	Input        string
+	Input        []byte
 	Line         int
 	Column       int
 	Start        int
@@ -173,7 +182,7 @@ func (lexer *Lexer) runeToString(rn rune) string {
 
 func (lexer *Lexer) Emit(tokenType TokenType) {
 	line := lexer.Line
-	column := lexer.Column - utf8.RuneCountInString(lexer.Input[lexer.Start:lexer.Pos])
+	column := lexer.Column - utf8.RuneCount(lexer.Input[lexer.Start:lexer.Pos])
 	start := lexer.Start
 	end := lexer.Pos
 	startPos := &Position{
@@ -188,7 +197,7 @@ func (lexer *Lexer) Emit(tokenType TokenType) {
 	}
 	var value string
 	var err error
-	value = lexer.Input[lexer.Start:lexer.Pos]
+	value = string(lexer.Input[lexer.Start:lexer.Pos])
 	if tokenType == STRING {
 		value, err = strconv.Unquote(value)
 		if err != nil {
@@ -205,7 +214,7 @@ func (lexer *Lexer) Next() (rn rune) {
 		lexer.Width = 0
 		return -1
 	}
-	rn, lexer.Width = utf8.DecodeRuneInString(lexer.Input[lexer.Pos:])
+	rn, lexer.Width = utf8.DecodeRune(lexer.Input[lexer.Pos:])
 	lexer.Column += 1
 	lexer.Pos += lexer.Width
 	return rn
@@ -228,27 +237,29 @@ func (lexer *Lexer) Peek() rune {
 	return rn
 }
 
-func (lexer *Lexer) Accept(valid string) bool {
-	if strings.IndexRune(valid, lexer.Next()) >= 0 {
+func (lexer *Lexer) Accept(valid []byte) bool {
+
+	if bytes.IndexRune(valid, lexer.Next()) >= 0 {
 		return true
 	}
 	lexer.Backup()
 	return false
 }
 
-func (lexer *Lexer) AcceptRun(valid string) int {
+func (lexer *Lexer) AcceptRun(valid []byte) int {
 	count := 0
-	for strings.IndexRune(valid, lexer.Next()) >= 0 {
+	for bytes.IndexRune(valid, lexer.Next()) >= 0 {
 		count++
 	}
 	lexer.Backup()
 	return count
 }
 
-func (lexer *Lexer) AcceptString(valid string) bool {
-	if strings.HasPrefix(lexer.Input[lexer.Pos:], valid) {
+func (lexer *Lexer) AcceptString(valid []byte) bool {
+
+	if bytes.HasPrefix(lexer.Input[lexer.Pos:], valid) {
 		lexer.Width = len(valid)
-		lexer.Column += utf8.RuneCountInString(valid)
+		lexer.Column += utf8.RuneCount(valid)
 		lexer.Pos += lexer.Width
 		return true
 	}
@@ -257,7 +268,7 @@ func (lexer *Lexer) AcceptString(valid string) bool {
 
 func (lexer *Lexer) Errorf(format string, args ...interface{}) StateFn {
 	line := lexer.Line
-	column := lexer.Column - utf8.RuneCountInString(lexer.Input[lexer.Start:lexer.Pos])
+	column := lexer.Column - utf8.RuneCount(lexer.Input[lexer.Start:lexer.Pos])
 	start := lexer.Start
 	end := lexer.Pos
 	startPos := &Position{
@@ -279,7 +290,7 @@ func (lexer *Lexer) Errorf(format string, args ...interface{}) StateFn {
 	return nil
 }
 
-func Lex(initialState StateFn, input string) chan Token {
+func Lex(initialState StateFn, input []byte) chan Token {
 	lexer := &Lexer{
 		Input:        input,
 		Tokens:       make(chan Token),
@@ -352,7 +363,7 @@ func LexText(lexer *Lexer) StateFn {
 			lexer.Backup()
 			return LexQuote
 		case rn == '.':
-			if lexer.AcceptString("..") {
+			if lexer.AcceptString(SpreadString) {
 				lexer.Emit(SPREAD)
 			} else {
 				return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid character "%s" found in document`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
@@ -376,28 +387,28 @@ func LexText(lexer *Lexer) StateFn {
 }
 
 func LexNumber(lexer *Lexer) StateFn {
-	lexer.Accept("+-")
+	lexer.Accept(NumberPrefixString)
 	numberType := INT
-	digits := "0123456789"
-	if lexer.Accept("0") {
-		if lexer.Accept(digits) {
+
+	if lexer.Accept(ZeroString) {
+		if lexer.Accept(DigitsString) {
 			lexer.Backup()
 			rn := lexer.Next()
 			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, unexpected digit after 0: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
 		}
 	}
-	lexer.AcceptRun(digits)
-	if lexer.Accept(".") {
-		count := lexer.AcceptRun(digits)
+	lexer.AcceptRun(DigitsString)
+	if lexer.Accept(DecimalString) {
+		count := lexer.AcceptRun(DigitsString)
 		if count == 0 {
 			rn := lexer.Next()
 			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, expected digit but got: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
 		}
 		numberType = FLOAT
 	}
-	if lexer.Accept("eE") {
-		lexer.Accept("+-")
-		count := lexer.AcceptRun("0123456789")
+	if lexer.Accept(NumberExponentString) {
+		lexer.Accept(NumberPrefixString)
+		count := lexer.AcceptRun(DigitsString)
 		if count == 0 {
 			rn := lexer.Next()
 			return lexer.Errorf(`GraphQL Syntax Error (%d:%d) Invalid number, expected digit but got: "%s"`, lexer.Line, lexer.Column-1, lexer.runeToString(rn))
@@ -414,7 +425,7 @@ func LexNumber(lexer *Lexer) StateFn {
 
 func LexComment(lexer *Lexer) StateFn {
 	isDescription := false
-	if lexer.AcceptString("##") {
+	if lexer.AcceptString(CommentString) {
 		isDescription = true
 	}
 	for {
@@ -446,7 +457,7 @@ Loop:
 			if rn = lexer.Next(); rn != -1 && rn != '\u000A' {
 				if rn == 'u' {
 					len := 0
-					for lexer.Accept("0123456789abcdefABCDEF") {
+					for lexer.Accept(HexString) {
 						len++
 					}
 					if len != 4 {

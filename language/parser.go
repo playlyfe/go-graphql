@@ -10,13 +10,13 @@ type Parser struct {
 	tokens    chan Token
 	lookahead *Token
 	prevEnd   *Position
-	source    string
+	source    []byte
 	ast       interface{}
 	noSource  bool
 }
 
 type ParseParams struct {
-	Source   string
+	Source   []byte
 	NoSource bool
 }
 
@@ -28,7 +28,7 @@ func (parser *Parser) Parse(params *ParseParams) (*Document, error) {
 	if token.Type == ILLEGAL {
 		return nil, &GraphQLError{
 			Message: token.Val,
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   token.Start,
 			End:     token.End,
 		}
@@ -44,7 +44,7 @@ func (parser *Parser) match(symbol TokenType) error {
 		if token.Type == ILLEGAL {
 			return &GraphQLError{
 				Message: token.Val,
-				Source:  parser.source,
+				Source:  string(parser.source),
 				Start:   token.Start,
 				End:     token.End,
 			}
@@ -54,7 +54,7 @@ func (parser *Parser) match(symbol TokenType) error {
 	} else {
 		return &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Expected %s, found %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, symbol, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -70,7 +70,7 @@ func (parser *Parser) matchName(value string) error {
 	} else {
 		return &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Expected \"%s\", found %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, value, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -88,7 +88,7 @@ func (parser *Parser) loc(start *Position) *LOC {
 	if parser.noSource {
 		node.Source = ""
 	} else {
-		node.Source = parser.source
+		node.Source = string(parser.source)
 	}
 	return node
 }
@@ -270,7 +270,7 @@ func (parser *Parser) definition() (ASTNode, error) {
 		default:
 			return nil, &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-				Source:  parser.source,
+				Source:  string(parser.source),
 				Start:   parser.lookahead.Start,
 				End:     parser.lookahead.End,
 			}
@@ -280,7 +280,7 @@ func (parser *Parser) definition() (ASTNode, error) {
 	default:
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -354,7 +354,7 @@ func (parser *Parser) operationDefinition() (ASTNode, error) {
 	default:
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -489,7 +489,7 @@ func (parser *Parser) selection() (ASTNode, error) {
 	} else {
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf(`GraphQL Syntax Error (%d:%d) Expected a selection or fragment spread, found %s`, parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -718,7 +718,7 @@ func (parser *Parser) fragmentName() (*Name, error) {
 	if parser.lookahead.Val == "on" {
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Fragment cannot be named \"on\"", parser.lookahead.Start.Line, parser.lookahead.Start.Column),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -806,7 +806,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 		if token.Val == "true" || token.Val == "false" || token.Val == "null" {
 			return nil, &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", token.Start.Line, token.Start.Column, token.String()),
-				Source:  parser.source,
+				Source:  string(parser.source),
 				Start:   token.Start,
 				End:     token.End,
 			}
@@ -824,7 +824,7 @@ func (parser *Parser) valueLiteral(isConstant bool) (ASTNode, error) {
 
 	return nil, &GraphQLError{
 		Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-		Source:  parser.source,
+		Source:  string(parser.source),
 		Start:   parser.lookahead.Start,
 		End:     parser.lookahead.End,
 	}
@@ -1069,7 +1069,7 @@ func (parser *Parser) typeDefinition(description string) (ASTNode, error) {
 	default:
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Unexpected %s", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.String()),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
@@ -1420,7 +1420,7 @@ func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
 	if parser.lookahead.Val == "true" || parser.lookahead.Val == "false" || parser.lookahead.Val == "null" {
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Enum value cannot be %q", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.Val),
-			Source:  parser.source,
+			Source:  string(parser.source),
 			Start:   parser.lookahead.Start,
 			End:     parser.lookahead.End,
 		}
