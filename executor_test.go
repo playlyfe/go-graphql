@@ -3850,6 +3850,50 @@ func BenchmarkSimpleRequest(b *testing.B) {
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
 		input := `
+            {
+                feed {
+                    id,
+                    title
+                },
+                article(id: "1") {
+                    ...articleFields,
+                    author {
+                        id,
+                        name,
+                        pic(width: 640, height: 480) {
+                            url,
+                            width,
+                            height
+                        },
+                        recentArticle {
+                            ...articleFields,
+                            keywords
+                        }
+                    }
+                }
+            }
+            fragment articleFields on Article {
+                id,
+                isPublished,
+                title,
+                body,
+                hidden,
+                notdefined
+            }
+            `
+		_, err := executor.Execute(context, input, variables, "")
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func BenchmarkComplexRequest(b *testing.B) {
+	b.StopTimer()
+	executor, context, variables := SetupBenchmark("complex")
+	b.StartTimer()
+	for n := 0; n < b.N; n++ {
+		input := `
             query Example($size: Int) {
                 a,
                 b,
@@ -3892,50 +3936,6 @@ func BenchmarkComplexEmptyRequest(b *testing.B) {
 		input := `
             {}
         `
-		_, err := executor.Execute(context, input, variables, "")
-		if err != nil {
-			panic(err)
-		}
-	}
-}
-
-func BenchmarkComplexRequest(b *testing.B) {
-	b.StopTimer()
-	executor, context, variables := SetupBenchmark("simple")
-	b.StartTimer()
-	for n := 0; n < b.N; n++ {
-		input := `
-            {
-                feed {
-                    id,
-                    title
-                },
-                article(id: "1") {
-                    ...articleFields,
-                    author {
-                        id,
-                        name,
-                        pic(width: 640, height: 480) {
-                            url,
-                            width,
-                            height
-                        },
-                        recentArticle {
-                            ...articleFields,
-                            keywords
-                        }
-                    }
-                }
-            }
-            fragment articleFields on Article {
-                id,
-                isPublished,
-                title,
-                body,
-                hidden,
-                notdefined
-            }
-            `
 		_, err := executor.Execute(context, input, variables, "")
 		if err != nil {
 			panic(err)
