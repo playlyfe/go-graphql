@@ -9,9 +9,10 @@ import (
 	"strings"
 	//"log"
 
+	"sync"
+
 	. "github.com/playlyfe/go-graphql/language"
 	"github.com/playlyfe/go-graphql/utils"
-	"sync"
 )
 
 type ResolveParams struct {
@@ -680,6 +681,7 @@ func handleGQLError(result map[string]interface{}, err error) (map[string]interf
 			}
 		}
 		errors = append(errors, gqlErrorData)
+		result["errors"] = errors
 		return result, nil
 	}
 	return nil, err
@@ -688,7 +690,6 @@ func handleGQLError(result map[string]interface{}, err error) (map[string]interf
 func (executor *Executor) Execute(context interface{}, request string, variables map[string]interface{}, operationName string) (map[string]interface{}, error) {
 	parser := &Parser{}
 	result := map[string]interface{}{}
-
 	document, err := parser.Parse(&ParseParams{
 		Source: request,
 	})
