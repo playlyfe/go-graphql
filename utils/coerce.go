@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"reflect"
 	"strconv"
 )
 
@@ -29,6 +30,14 @@ func CoerceFloat(value interface{}) (float32, bool) {
 		}
 		return float32(val), true
 	default:
+		v := reflect.ValueOf(value)
+		kind := v.Kind()
+		switch kind {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return float32(v.Int()), true
+		case reflect.Float32, reflect.Float64:
+			return float32(v.Float()), true
+		}
 		return 0.0, false
 	}
 }
@@ -58,6 +67,14 @@ func CoerceInt(value interface{}) (int32, bool) {
 		}
 		return int32(val), true
 	default:
+		v := reflect.ValueOf(value)
+		kind := v.Kind()
+		switch kind {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			return int32(v.Int()), true
+		case reflect.Float32, reflect.Float64:
+			return int32(v.Float()), true
+		}
 		return 0, false
 	}
 }
@@ -107,6 +124,10 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 	default:
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.Bool {
+			return v.Bool(), true
+		}
 		return false, false
 	}
 }
@@ -128,6 +149,10 @@ func CoerceString(value interface{}) (string, bool) {
 	case string:
 		return result, true
 	default:
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.String {
+			return v.String(), true
+		}
 		return "", false
 	}
 }
@@ -149,6 +174,10 @@ func CoerceEnum(value interface{}) (string, bool) {
 	case string:
 		return result, true
 	default:
+		v := reflect.ValueOf(value)
+		if v.Kind() == reflect.String {
+			return v.String(), true
+		}
 		return "", false
 	}
 }
