@@ -2,6 +2,10 @@ package language
 
 type ASTNode interface{}
 
+type RawValuer interface {
+	RawValue() interface{}
+}
+
 type Position struct {
 	Index  int
 	Line   int
@@ -238,9 +242,17 @@ type Int struct {
 	LOC   *LOC
 }
 
+func (node *Int) RawValue() interface{} {
+	return node.Value
+}
+
 type Float struct {
 	Value float32
 	LOC   *LOC
+}
+
+func (node *Float) RawValue() interface{} {
+	return node.Value
 }
 
 type String struct {
@@ -248,9 +260,17 @@ type String struct {
 	LOC   *LOC
 }
 
+func (node *String) RawValue() interface{} {
+	return node.Value
+}
+
 type Boolean struct {
 	Value bool
 	LOC   *LOC
+}
+
+func (node *Boolean) RawValue() interface{} {
+	return node.Value
 }
 
 type Enum struct {

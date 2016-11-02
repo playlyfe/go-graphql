@@ -418,21 +418,37 @@ func (executor *Executor) valueFromAST(context interface{}, valueAST ASTNode, nt
 	if vtype, ok := ntype.(*NamedType); ok {
 		switch typeName := vtype.Name.Value; typeName {
 		case "Int":
-			if val, ok := valueAST.(*Int); ok {
-				return val.Value, nil
+			if val1, ok1 := valueAST.(RawValuer); ok1 {
+				val2, ok2 := utils.CoerceInt(val1.RawValue())
+				if ok2 {
+					return val2, nil
+				}
 			}
+			return nil, nil
 		case "Float":
-			if val, ok := valueAST.(*Float); ok {
-				return val.Value, nil
+			if val1, ok1 := valueAST.(RawValuer); ok1 {
+				val2, ok2 := utils.CoerceFloat(val1.RawValue())
+				if ok2 {
+					return val2, nil
+				}
 			}
+			return nil, nil
 		case "String", "ID":
-			if val, ok := valueAST.(*String); ok {
-				return val.Value, nil
+			if val1, ok1 := valueAST.(RawValuer); ok1 {
+				val2, ok2 := utils.CoerceString(val1.RawValue())
+				if ok2 {
+					return val2, nil
+				}
 			}
+			return nil, nil
 		case "Boolean":
-			if val, ok := valueAST.(*Boolean); ok {
-				return val.Value, nil
+			if val1, ok1 := valueAST.(RawValuer); ok1 {
+				val2, ok2 := utils.CoerceBoolean(val1.RawValue())
+				if ok2 {
+					return val2, nil
+				}
 			}
+			return nil, nil
 		default:
 			ttype := executor.Schema.Document.TypeIndex[typeName]
 			if ttype == nil {
@@ -1201,6 +1217,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		}
 		return completedResults, nil
 	}
+
 	switch typeName := fieldType.(*NamedType).Name.Value; typeName {
 	case "Int":
 		val, ok := utils.CoerceInt(result)
