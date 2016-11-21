@@ -116,6 +116,17 @@ func (executor *Executor) resolveNamedType(ntype ASTNode) *NamedType {
 	return nil
 }
 
+func (executor *Executor) printType(ttype ASTNode) string {
+	if ntype, ok := ttype.(*NamedType); ok {
+		return ntype.Name.Value
+	} else if ltype, ok := ttype.(*ListType); ok {
+		return "[" + executor.printType(ltype.Type) + "]"
+	} else if nntype, ok := ttype.(*NonNullType); ok {
+		return executor.printType(nntype.Type) + "!"
+	}
+	panic("Unexpected AST node type")
+}
+
 // TODO: Implement type printer
 /*func PrintType (ntype ASTNode) string {
     output := ""
@@ -160,13 +171,8 @@ func (executor *Executor) variableValue(context interface{}, ntype ASTNode, inpu
 			return nil, err
 		}
 		if executor.IsNullish(value) {
-			if namedType, ok := ttype.Type.(*NamedType); ok {
-				return nil, &GraphQLError{
-					Message: fmt.Sprintf("Expected \"%s!\", found null", namedType.Name.Value),
-				}
-			}
 			return nil, &GraphQLError{
-				Message: "Expected non-null value, found null",
+				Message: fmt.Sprintf("Expected \"%s\", found null", executor.printType(ttype)),
 			}
 		}
 		return value, nil
@@ -216,7 +222,22 @@ func (executor *Executor) variableValue(context interface{}, ntype ASTNode, inpu
 				}
 			}
 			return result, nil
-		case "String", "ID":
+		case "String":
+			result, ok := utils.CoerceString(input)
+			if !ok {
+				return nil, &GraphQLError{
+					Message: "Failed to coerce value to String",
+				}
+			}
+			return result, nil
+		case "ID":
+			if parser, ok := executor.Scalars["ID"]; ok {
+				result, err := parser.ParseValue(context, input)
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			}
 			result, ok := utils.CoerceString(input)
 			if !ok {
 				return nil, &GraphQLError{
@@ -327,7 +348,7 @@ func (executor *Executor) valueFromAST(context interface{}, valueAST ASTNode, nt
 		}
 		if value == nil {
 			return nil, &GraphQLError{
-				Message: fmt.Sprintf("Value required of type \"%s!\" was not provided", ttype.Type.(*NamedType).Name.Value),
+				Message: fmt.Sprintf("Value required of type \"%s\" was not provided", executor.printType(ttype)),
 			}
 		}
 		return value, nil
@@ -433,7 +454,22 @@ func (executor *Executor) valueFromAST(context interface{}, valueAST ASTNode, nt
 				}
 			}
 			return nil, nil
-		case "String", "ID":
+		case "String":
+			if val1, ok1 := valueAST.(RawValuer); ok1 {
+				val2, ok2 := utils.CoerceString(val1.RawValue())
+				if ok2 {
+					return val2, nil
+				}
+			}
+			return nil, nil
+		case "ID":
+			if scalarParser, ok := executor.Scalars["ID"]; ok {
+				result, err := scalarParser.ParseLiteral(context, valueAST)
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			}
 			if val1, ok1 := valueAST.(RawValuer); ok1 {
 				val2, ok2 := utils.CoerceString(val1.RawValue())
 				if ok2 {
@@ -1223,38 +1259,49 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		val, ok := utils.CoerceInt(result)
 		if ok {
 			return val, nil
-		} else {
-			return nil, nil
 		}
+		return nil, nil
 	case "Float":
 		val, ok := utils.CoerceFloat(result)
 		if ok {
 			return val, nil
-		} else {
-			return nil, nil
 		}
-	case "String", "ID":
+		return nil, nil
+	case "String":
 		val, ok := utils.CoerceString(result)
 		if ok {
 			return val, nil
-		} else {
-			return nil, nil
 		}
+		return nil, nil
+	case "ID":
+		if parser, ok := executor.Scalars["ID"]; ok {
+			val, err := parser.Serialize(reqCtx.AppContext, result)
+			if err != nil {
+				if gqlErr, ok := err.(*GraphQLError); ok {
+					gqlErr.Field = field
+				}
+				return nil, err
+			}
+			return val, nil
+		}
+		val, ok := utils.CoerceString(result)
+		if ok {
+			return val, nil
+		}
+		return nil, nil
 	case "Boolean":
 		val, ok := utils.CoerceBoolean(result)
 		if ok {
 			return val, nil
-		} else {
-			return nil, nil
 		}
+		return nil, nil
 	default:
 		if _, ok := executor.Schema.Document.EnumTypeIndex[typeName]; ok {
 			val, ok := utils.CoerceEnum(result)
 			if ok {
 				return val, nil
-			} else {
-				return nil, nil
 			}
+			return nil, nil
 		}
 		if scalar, ok := executor.Schema.Document.ScalarTypeIndex[typeName]; ok {
 			parser, ok := executor.Scalars[typeName]
