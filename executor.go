@@ -756,65 +756,58 @@ func (executor *Executor) Execute(context interface{}, request string, variables
 		Variables:  variables,
 	}
 
-	notFound := true
-
+	var selectedOperation *OperationDefinition
 	for _, definition := range document.Definitions {
-		switch operationDefinition := definition.(type) {
-		case *OperationDefinition:
+		if operationDefinition, ok := definition.(*OperationDefinition); ok {
 			if (operationDefinition.Name != nil && operationDefinition.Name.Value == operationName) || operationName == "" {
-				if operationName == "" && notFound == false {
+				if selectedOperation == nil {
+					selectedOperation = operationDefinition
+				} else {
 					reqCtx.ErrorList.Add(&Error{
 						Error: &GraphQLError{
 							Message: "GraphQL Runtime Error: Must provide operation name if query contains multiple operations",
 						},
 					})
-				}
-				notFound = false
-				if executor.Before != nil {
-					err = executor.Before(&ResolveParams{
-						Executor: executor,
-						Schema:   executor.Schema.Document,
-						Request:  reqCtx.Document,
-						Context:  reqCtx.AppContext,
-					}, operationDefinition.Operation)
-					if err != nil {
-						result, err = handleGQLError(result, err)
-						if err != nil {
-							return nil, err
-						}
-					}
-				}
-
-				if operationDefinition.Operation == "query" {
-					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
-					data, err := executor.selectionSet(reqCtx, true, executor.Schema.QueryRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
-					if err != nil {
-						result, err = handleGQLError(result, err)
-						if err != nil {
-							return nil, err
-						}
-					}
-					result["data"] = data
-				} else if operationDefinition.Operation == "mutation" {
-					reqCtx.VariableDefinitionIndex = operationDefinition.VariableDefinitionIndex
-					data, err := executor.selectionSet(reqCtx, false, executor.Schema.MutationRoot, map[string]interface{}{}, operationDefinition.SelectionSet)
-					if err != nil {
-						result, err = handleGQLError(result, err)
-						if err != nil {
-							return nil, err
-						}
-					}
-					result["data"] = data
+					break
 				}
 			}
 		}
 	}
-	if notFound {
+	if selectedOperation == nil {
 		reqCtx.ErrorList.Add(&Error{
 			Error: &GraphQLError{
 				Message: fmt.Sprintf("GraphQL Runtime Error: Operation with name %q not found in document", operationName),
 			},
 		})
+	} else {
+		if executor.Before != nil {
+			err = executor.Before(&ResolveParams{
+				Executor: executor,
+				Schema:   executor.Schema.Document,
+				Request:  reqCtx.Document,
+				Context:  reqCtx.AppContext,
+			}, selectedOperation.Operation)
+			if err != nil {
+				result, err = handleGQLError(result, err)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+		reqCtx.VariableDefinitionIndex = selectedOperation.VariableDefinitionIndex
+		var data map[string]interface{}
+		if selectedOperation.Operation == "query" {
+			data, err = executor.selectionSet(reqCtx, false, executor.Schema.QueryRoot, map[string]interface{}{}, selectedOperation.SelectionSet)
+		} else if selectedOperation.Operation == "mutation" {
+			data, err = executor.selectionSet(reqCtx, false, executor.Schema.MutationRoot, map[string]interface{}{}, selectedOperation.SelectionSet)
+		}
+		if err != nil {
+			result, err = handleGQLError(result, err)
+			if err != nil {
+				return nil, err
+			}
+		}
+		result["data"] = data
 	}
 
 	if len(reqCtx.ErrorList.Errors) > 0 {
