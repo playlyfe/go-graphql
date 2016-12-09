@@ -13,6 +13,16 @@ func CoerceFloat(value interface{}) (float32, bool) {
 		return float32(result), true
 	case int64:
 		return float32(result), true
+	case uint:
+		return float32(result), true
+	case uint8:
+		return float32(result), true
+	case uint16:
+		return float32(result), true
+	case uint32:
+		return float32(result), true
+	case uint64:
+		return float32(result), true
 	case float32:
 		return result, true
 	case float64:
@@ -20,9 +30,8 @@ func CoerceFloat(value interface{}) (float32, bool) {
 	case bool:
 		if result == true {
 			return 1.0, true
-		} else {
-			return 0.0, true
 		}
+		return 0.0, true
 	case string:
 		val, err := strconv.ParseFloat(result, 64)
 		if err != nil {
@@ -33,7 +42,7 @@ func CoerceFloat(value interface{}) (float32, bool) {
 		v := reflect.ValueOf(value)
 		kind := v.Kind()
 		switch kind {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			return float32(v.Int()), true
 		case reflect.Float32, reflect.Float64:
 			return float32(v.Float()), true
@@ -50,6 +59,16 @@ func CoerceInt(value interface{}) (int32, bool) {
 		return result, true
 	case int64:
 		return int32(result), true
+	case uint:
+		return int32(result), true
+	case uint8:
+		return int32(result), true
+	case uint16:
+		return int32(result), true
+	case uint32:
+		return int32(result), true
+	case uint64:
+		return int32(result), true
 	case float32:
 		return int32(result), true
 	case float64:
@@ -57,9 +76,8 @@ func CoerceInt(value interface{}) (int32, bool) {
 	case bool:
 		if result == true {
 			return 1, true
-		} else {
-			return 0, true
 		}
+		return 0, true
 	case string:
 		val, err := strconv.ParseInt(result, 10, 64)
 		if err != nil {
@@ -70,7 +88,7 @@ func CoerceInt(value interface{}) (int32, bool) {
 		v := reflect.ValueOf(value)
 		kind := v.Kind()
 		switch kind {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			return int32(v.Int()), true
 		case reflect.Float32, reflect.Float64:
 			return int32(v.Float()), true
@@ -84,33 +102,53 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 	case int:
 		if result != 0 {
 			return true, true
-		} else {
-			return false, true
 		}
+		return false, true
 	case int32:
 		if result != 0 {
 			return true, true
-		} else {
-			return false, true
 		}
+		return false, true
 	case int64:
 		if result != 0 {
 			return true, true
-		} else {
-			return false, true
 		}
+		return false, true
 	case float32:
 		if result != 0.0 {
 			return true, true
-		} else {
-			return false, true
 		}
+		return false, true
 	case float64:
 		if result != 0.0 {
 			return true, true
-		} else {
-			return false, true
 		}
+		return false, true
+	case uint:
+		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case uint8:
+		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case uint16:
+		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case uint32:
+		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case uint64:
+		if result != 0 {
+			return true, true
+		}
+		return false, true
 	case bool:
 		return result, true
 	case string:
@@ -120,9 +158,8 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		} else if result == "" {
 			return false, true
-		} else {
-			return true, true
 		}
+		return true, true
 	default:
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.Bool {
@@ -140,6 +177,16 @@ func CoerceString(value interface{}) (string, bool) {
 		return strconv.FormatInt(int64(result), 10), true
 	case int64:
 		return strconv.FormatInt(result, 10), true
+	case uint:
+		return strconv.FormatInt(int64(result), 10), true
+	case uint8:
+		return strconv.FormatInt(int64(result), 10), true
+	case uint16:
+		return strconv.FormatInt(int64(result), 10), true
+	case uint32:
+		return strconv.FormatInt(int64(result), 10), true
+	case uint64:
+		return strconv.FormatInt(int64(result), 10), true
 	case float32:
 		return strconv.FormatFloat(float64(result), 'f', -1, 64), true
 	case float64:
