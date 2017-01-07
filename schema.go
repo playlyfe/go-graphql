@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"fmt"
+
 	. "github.com/playlyfe/go-graphql/language"
 )
 
@@ -271,9 +272,9 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	schema.QueryRoot.Fields = append(schema.QueryRoot.Fields, typeField)
 	resolvers[queryRoot+"/__schema"] = func(params *ResolveParams) (interface{}, error) {
 		executor := params.Executor
-		return map[string]interface{}{
-			"queryType":    executor.introspectType(params, queryRoot),
-			"mutationType": executor.introspectType(params, mutationRoot),
+
+		result := map[string]interface{}{
+			"queryType": executor.introspectType(params, queryRoot),
 			"directives": []map[string]interface{}{
 				{
 					"name":        "skip",
@@ -318,7 +319,14 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 					"onFragment":  true,
 				},
 			},
-		}, nil
+		}
+
+		//TODO: better handling for empty mutationRoot
+		if schema.MutationRoot != nil {
+			result["mutationType"] = executor.introspectType(params, mutationRoot)
+		}
+
+		return result, nil
 	}
 	resolvers["__Schema/types"] = func(params *ResolveParams) (interface{}, error) {
 		types := []map[string]interface{}{}
