@@ -129,10 +129,10 @@ func (executor *Executor) printType(ttype ASTNode) string {
 
 // TODO: Implement type printer
 /*func PrintType (ntype ASTNode) string {
-    output := ""
+	output := ""
 
 
-    }
+	}
 }*/
 
 /**
@@ -432,8 +432,8 @@ func (executor *Executor) valueFromAST(context interface{}, valueAST ASTNode, nt
 			}
 			return []interface{}{itemValue}, nil
 			/*return nil, &GraphQLError{
-							Message: "Epected a list",
-			            }*/
+				Message: "Epected a list",
+			}*/
 		}
 	}
 	if vtype, ok := ntype.(*NamedType); ok {
@@ -618,81 +618,97 @@ func NewExecutor(schemaDefinition string, queryRoot string, mutationRoot string,
 
 func (executor *Executor) PrintSchema() string {
 	introspectionQuery := `
-    query IntrospectionQuery {
-        __schema {
-            queryType { name }
-            mutationType { name }
-            subscriptionType { name }
-            types {
-                ...FullType
-            }
-            directives {
-                name
-                description
-                args {
-                    ...InputValue
-                }
-                onOperation
-                onFragment
-                onField
-            }
-        }
-    }
-    fragment FullType on __Type {
-        kind
-        name
-        description
-        fields(includeDeprecated: true) {
-            name
-            description
-            args {
-                ...InputValue
-            }
-            type {
-                ...TypeRef
-            }
-            isDeprecated
-            deprecationReason
-        }
-        inputFields {
-            ...InputValue
-        }
-        interfaces {
-            ...TypeRef
-        }
-        enumValues(includeDeprecated: true) {
-            name
-            description
-            isDeprecated
-            deprecationReason
-        }
-        possibleTypes {
-            ...TypeRef
-        }
-    }
-    fragment InputValue on __InputValue {
-        name
-        description
-        type { ...TypeRef }
-        defaultValue
-    }
-    fragment TypeRef on __Type {
-        kind
-        name
-        ofType {
-            kind
-            name
-            ofType {
-                kind
-                name
-                ofType {
-                    kind
-                    name
-                }
-            }
-        }
-    }
-    `
+	query IntrospectionQuery {
+		__schema {
+			queryType { name }
+			mutationType { name }
+			subscriptionType { name }
+			types {
+				...FullType
+			}
+			directives {
+				name
+				description
+				args {
+					...InputValue
+				}
+				onOperation
+				onFragment
+				onField
+			}
+		}
+	}
+	fragment FullType on __Type {
+		kind
+		name
+		description
+		fields(includeDeprecated: true) {
+			name
+			description
+			args {
+				...InputValue
+			}
+			type {
+				...TypeRef
+			}
+			isDeprecated
+			deprecationReason
+		}
+		inputFields {
+			...InputValue
+		}
+		interfaces {
+			...TypeRef
+		}
+		enumValues(includeDeprecated: true) {
+			name
+			description
+			isDeprecated
+			deprecationReason
+		}
+		possibleTypes {
+			...TypeRef
+		}
+	}
+	fragment InputValue on __InputValue {
+		name
+		description
+		type { ...TypeRef }
+		defaultValue
+	}
+	fragment TypeRef on __Type {
+		kind
+		name
+		ofType {
+			kind
+			name
+			ofType {
+				kind
+				name
+				ofType {
+					kind
+					name
+					ofType {
+						kind
+						name
+						ofType {
+							kind
+							name
+							ofType {
+								kind
+								name
+								ofType {
+									kind
+									name
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	`
 	result, err := executor.Execute(nil, introspectionQuery, map[string]interface{}{}, "IntrospectionQuery")
 	if err != nil {
 		panic(err)
