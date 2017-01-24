@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"reflect"
 	"strconv"
 )
@@ -195,6 +196,8 @@ func CoerceString(value interface{}) (string, bool) {
 		return strconv.FormatBool(result), true
 	case string:
 		return result, true
+	case fmt.Stringer:
+		return result.String(), true
 	default:
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.String {
