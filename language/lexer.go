@@ -188,7 +188,9 @@ func (lexer *Lexer) Emit(tokenType TokenType) {
 	}
 	var value string
 	var err error
-	value = lexer.Input[lexer.Start:lexer.Pos]
+	buffer := make([]byte, lexer.Pos-lexer.Start)
+	copy(buffer, []byte(lexer.Input[lexer.Start:lexer.Pos]))
+	value = string(buffer)
 	if tokenType == STRING {
 		value, err = strconv.Unquote(value)
 		if err != nil {
