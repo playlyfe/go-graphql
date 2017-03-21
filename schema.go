@@ -184,19 +184,6 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	if err != nil {
 		return nil, nil, err
 	}
-	typenameField := &FieldDefinition{
-		Name: &Name{
-			Value: "__typename",
-		},
-		Description: "The GraphQL type name",
-		Type: &NonNullType{
-			Type: &NamedType{
-				Name: &Name{
-					Value: "String",
-				},
-			},
-		},
-	}
 	for _, definition := range ast.Definitions {
 		switch operationDefinition := definition.(type) {
 		case *ObjectTypeDefinition:
@@ -205,8 +192,6 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 			} else if operationDefinition.Name.Value == mutationRoot {
 				schema.MutationRoot = operationDefinition
 			}
-			operationDefinition.Fields = append(operationDefinition.Fields, typenameField)
-			operationDefinition.FieldIndex["__typename"] = typenameField
 			resolvers[operationDefinition.Name.Value+"/__typename"] = typenameResolver(operationDefinition.Name.Value)
 		}
 	}
@@ -215,11 +200,7 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 			Message: "The QueryRoot could not be found",
 		}
 	}
-	/*if schema.MutationRoot == nil {
-		return nil, nil, &GraphQLError{
-			Message: "The MutationRoot could not be found",
-		}
-	}*/
+
 	// Add implict fields to query root
 	schemaField := &FieldDefinition{
 		Name: &Name{

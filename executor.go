@@ -1363,6 +1363,10 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 
 func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectType *ObjectTypeDefinition, object interface{}, fieldType ASTNode, firstField *Field) (interface{}, error) {
 
+	if firstField.Name.Value == "__typename" {
+		return objectType.Name.Value, nil
+	}
+
 	resolverName := objectType.Name.Value + "/" + firstField.Name.Value
 	if resolver, ok := executor.Resolvers[resolverName]; ok {
 		var resolveFn ResolveFn
@@ -1513,6 +1517,13 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 }
 
 func (executor *Executor) getFieldTypeFromObjectType(objectType *ObjectTypeDefinition, firstField *Field) ASTNode {
+	if firstField.Name.Value == "__typename" {
+		return &NamedType{
+			Name: &Name{
+				Value: "String",
+			},
+		}
+	}
 	for _, field := range objectType.Fields {
 		if field.Name.Value == firstField.Name.Value {
 			return field.Type
