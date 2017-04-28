@@ -15,7 +15,8 @@ import (
 
 func main() {
 	schema := `
-	## double hashed comments are will be parsed as descriptions.
+	## double hashed comments be parsed as descriptions and show up in
+	## introspection queries
 	interface Pet {
 	    name: String
 	}
