@@ -1366,6 +1366,10 @@ func (parser *Parser) enumValueDefinition() (*EnumValueDefinition, error) {
 	var err error
 	node := &EnumValueDefinition{}
 	start := parser.lookahead.Start
+	node.Description, err = parser.description()
+	if err != nil {
+		return nil, err
+	}
 	if parser.lookahead.Val == "true" || parser.lookahead.Val == "false" || parser.lookahead.Val == "null" {
 		return nil, &GraphQLError{
 			Message: fmt.Sprintf("GraphQL Syntax Error (%d:%d) Enum value cannot be %q", parser.lookahead.Start.Line, parser.lookahead.Start.Column, parser.lookahead.Val),
