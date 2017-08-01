@@ -1493,13 +1493,20 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 				return valueField.Interface(), nil
 			}
 			tag := typeField.Tag
-			jsonTag := tag.Get("json")
-			jsonOptions := strings.Split(jsonTag, ",")
-			if len(jsonOptions) == 0 {
-				continue
-			}
-			if jsonOptions[0] != firstField.Name.Value {
-				continue
+
+			if name, ok := tag.Lookup("graphql"); ok {
+				if name != firstField.Name.Value {
+					continue
+				}
+			} else {
+				jsonTag := tag.Get("json")
+				jsonOptions := strings.Split(jsonTag, ",")
+				if len(jsonOptions) == 0 {
+					continue
+				}
+				if jsonOptions[0] != firstField.Name.Value {
+					continue
+				}
 			}
 			if valueField.IsValid() && valueField.Kind() == reflect.Ptr {
 				elem := valueField.Elem()
