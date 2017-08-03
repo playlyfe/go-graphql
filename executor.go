@@ -1481,10 +1481,7 @@ func (executor *Executor) resolveFieldOnObject(reqCtx *RequestContext, objectTyp
 	}
 
 	if sourceValKind == reflect.Struct {
-		// find field based on struct's json tag
-		// we could potentially create a custom `graphql` tag, but its unnecessary at this point
-		// since graphql speaks to client in a json-like way anyway
-		// so json tags are a good way to start with
+		// find field based on struct's graphql tag, with fallback to json tag
 		for i := 0; i < sourceVal.NumField(); i++ {
 			valueField := sourceVal.Field(i)
 			typeField := sourceValType.Field(i)
