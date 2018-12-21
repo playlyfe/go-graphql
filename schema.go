@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"fmt"
+	"sort"
 
 	. "github.com/playlyfe/go-graphql/language"
 )
@@ -94,22 +95,30 @@ type __Directive {
 }
 `
 
-func (executor *Executor) introspectType(params *ResolveParams, typeValue interface{}) map[string]interface{} {
+func (executor *Executor) introspectType(params *ResolveParams, typeValue interface{}, d ...int) map[string]interface{} {
+	depth := 0
+	if len(d) > 0 {
+		depth = d[0]
+	}
+	depth += 1
+	if depth > 10 {
+		return nil
+	}
 	schema := executor.Schema.Document
 	typeIndex := schema.TypeIndex
 	switch ttype := typeValue.(type) {
 	case *NonNullType:
 		return map[string]interface{}{
 			"kind":   "NON_NULL",
-			"ofType": executor.introspectType(params, ttype.Type),
+			"ofType": executor.introspectType(params, ttype.Type, depth),
 		}
 	case *ListType:
 		return map[string]interface{}{
 			"kind":   "LIST",
-			"ofType": executor.introspectType(params, ttype.Type),
+			"ofType": executor.introspectType(params, ttype.Type, depth),
 		}
 	case *NamedType:
-		return executor.introspectType(params, ttype.Name.Value)
+		return executor.introspectType(params, ttype.Name.Value, depth)
 	case string:
 		typeInfo := map[string]interface{}{
 			"name": ttype,
@@ -135,7 +144,7 @@ func (executor *Executor) introspectType(params *ResolveParams, typeValue interf
 				inputFields = append(inputFields, map[string]interface{}{
 					"name":         inputValueDefinition.Name.Value,
 					"description":  inputValueDefinition.Description,
-					"type":         executor.introspectType(params, inputValueDefinition.Type),
+					"type":         executor.introspectType(params, inputValueDefinition.Type, depth),
 					"defaultValue": defaultValue,
 				})
 			}
@@ -145,7 +154,7 @@ func (executor *Executor) introspectType(params *ResolveParams, typeValue interf
 			typeInfo["description"] = __type.Description
 			possibleTypes := []map[string]interface{}{}
 			for _, objectType := range schema.PossibleTypesIndex[__type.Name.Value] {
-				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value))
+				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value, depth))
 			}
 			typeInfo["possibleTypes"] = possibleTypes
 		case *UnionTypeDefinition:
@@ -153,7 +162,7 @@ func (executor *Executor) introspectType(params *ResolveParams, typeValue interf
 			typeInfo["description"] = __type.Description
 			possibleTypes := []map[string]interface{}{}
 			for _, objectType := range schema.PossibleTypesIndex[__type.Name.Value] {
-				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value))
+				possibleTypes = append(possibleTypes, executor.introspectType(params, objectType.Name.Value, depth))
 			}
 			typeInfo["possibleTypes"] = possibleTypes
 		case *EnumTypeDefinition:
@@ -311,7 +320,12 @@ func NewSchema(schemaDefinition string, queryRoot string, mutationRoot string) (
 	}
 	resolvers["__Schema/types"] = func(params *ResolveParams) (interface{}, error) {
 		types := []map[string]interface{}{}
+		typeNames := []string{}
 		for typeName, _ := range params.Schema.TypeIndex {
+			typeNames = append(typeNames, typeName)
+		}
+		sort.Strings(typeNames)
+		for _, typeName := range typeNames {
 			if typeName == "__Schema" || typeName == "__Type" || typeName == "__Field" || typeName == "__InputValue" || typeName == "__EnumValue" || typeName == "__TypeKind" || typeName == "__Directive" {
 				continue
 			}

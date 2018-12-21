@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"testing"
+
 	. "github.com/playlyfe/go-graphql/language"
 	. "github.com/smartystreets/goconvey/convey"
-	"testing"
 )
 
 type Author struct {
@@ -751,6 +752,356 @@ func TestExecutor(t *testing.T) {
 
 		})
 
+	})
+
+	Convey("NOW:Execute: Handles recursive type introspection", t, func() {
+		schema := `
+		input FilterInput {
+			val: String
+			and: [FilterInput!]
+			or: [FilterInput!]
+		}
+
+		type Node {
+			val: String
+		}
+
+		type QueryRoot {
+			node(filter: FilterInput): Node
+		}
+		`
+
+		input := `
+		query IntrospectionQuery {
+			__schema {
+				queryType { name }
+				mutationType { name }
+				subscriptionType { name }
+				types {
+					...FullType
+				}
+				directives {
+					name
+					description
+					args {
+						...InputValue
+					}
+					onOperation
+					onFragment
+					onField
+				}
+			}
+		}
+		fragment FullType on __Type {
+			kind
+			name
+			description
+			fields(includeDeprecated: true) {
+				name
+				description
+				args {
+					...InputValue
+				}
+				type {
+					...TypeRef
+				}
+				isDeprecated
+				deprecationReason
+			}
+			inputFields {
+				...InputValue
+			}
+			interfaces {
+				...TypeRef
+			}
+			enumValues(includeDeprecated: true) {
+				name
+				description
+				isDeprecated
+				deprecationReason
+			}
+			possibleTypes {
+				...TypeRef
+			}
+		}
+		fragment InputValue on __InputValue {
+			name
+			description
+			type { ...TypeRef }
+			defaultValue
+		}
+		fragment TypeRef on __Type {
+			kind
+			name
+			ofType {
+				kind
+				name
+				ofType {
+					kind
+					name
+					ofType {
+						kind
+						name
+						ofType {
+							kind
+							name
+							ofType {
+								kind
+								name
+								ofType {
+									kind
+									name
+									ofType {
+										kind
+										name
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		`
+
+		resolvers := map[string]interface{}{}
+		resolvers["QueryRoot/node"] = func(params *ResolveParams) (interface{}, error) {
+			return []map[string]interface{}{}, nil
+		}
+		context := map[string]interface{}{}
+		variables := map[string]interface{}{}
+		executor, err := NewExecutor(schema, "QueryRoot", "", resolvers)
+		So(err, ShouldEqual, nil)
+		executor.ResolveType = func(value interface{}) string {
+			if object, ok := value.(map[string]interface{}); ok {
+				return object["__typename"].(string)
+			}
+			return ""
+		}
+		result, err := executor.Execute(context, input, variables, "")
+		So(err, ShouldEqual, nil)
+		So(result, ShouldResemble, map[string]interface{}{
+			"data": map[string]interface{}{
+				"__schema": map[string]interface{}{
+					"directives": []interface{}{
+						map[string]interface{}{
+							"args": []interface{}{
+								map[string]interface{}{
+									"defaultValue": interface{}(nil),
+									"description":  "The condition value",
+									"name":         "if",
+									"type": map[string]interface{}{
+										"kind": "NON_NULL",
+										"name": interface{}(nil),
+										"ofType": map[string]interface{}{
+											"kind":   "SCALAR",
+											"name":   "Boolean",
+											"ofType": interface{}(nil),
+										},
+									},
+								},
+							},
+							"description": "Conditionally exclude a field or fragment during execution",
+							"name":        "skip",
+							"onField":     true,
+							"onFragment":  true,
+							"onOperation": false,
+						},
+						map[string]interface{}{
+							"args": []interface{}{
+								map[string]interface{}{
+									"defaultValue": interface{}(nil),
+									"description":  "The condition value", "name": "if",
+									"type": map[string]interface{}{
+										"kind": "NON_NULL",
+										"name": interface{}(nil),
+										"ofType": map[string]interface{}{
+											"kind":   "SCALAR",
+											"name":   "Boolean",
+											"ofType": interface{}(nil),
+										},
+									},
+								},
+							},
+							"description": "Conditionally include a field or fragment during execution",
+							"name":        "include",
+							"onField":     true,
+							"onFragment":  true,
+							"onOperation": false,
+						},
+					},
+					"mutationType": interface{}(nil),
+					"queryType": map[string]interface{}{
+						"name": "QueryRoot",
+					},
+					"types": []interface{}{
+						map[string]interface{}{
+							"description":   interface{}(nil),
+							"enumValues":    interface{}(nil),
+							"fields":        interface{}(nil),
+							"inputFields":   interface{}(nil),
+							"interfaces":    interface{}(nil),
+							"kind":          "SCALAR",
+							"name":          "Boolean",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description": interface{}(nil),
+							"enumValues":  interface{}(nil),
+							"fields":      interface{}(nil),
+							"inputFields": []interface{}{
+								map[string]interface{}{
+									"defaultValue": interface{}(nil),
+									"description":  interface{}(nil),
+									"name":         "val",
+									"type": map[string]interface{}{
+										"kind":   "SCALAR",
+										"name":   "String",
+										"ofType": interface{}(nil),
+									},
+								}, map[string]interface{}{
+									"defaultValue": interface{}(nil),
+									"description":  interface{}(nil),
+									"name":         "and",
+									"type": map[string]interface{}{
+										"kind": "LIST",
+										"name": interface{}(nil),
+										"ofType": map[string]interface{}{
+											"kind": "NON_NULL",
+											"name": interface{}(nil),
+											"ofType": map[string]interface{}{
+												"kind":   "INPUT_OBJECT",
+												"name":   "FilterInput",
+												"ofType": interface{}(nil),
+											},
+										},
+									},
+								},
+								map[string]interface{}{
+									"defaultValue": interface{}(nil),
+									"description":  interface{}(nil),
+									"name":         "or",
+									"type": map[string]interface{}{
+										"kind": "LIST",
+										"name": interface{}(nil),
+										"ofType": map[string]interface{}{
+											"kind": "NON_NULL",
+											"name": interface{}(nil),
+											"ofType": map[string]interface{}{
+												"kind":   "INPUT_OBJECT",
+												"name":   "FilterInput",
+												"ofType": interface{}(nil),
+											},
+										},
+									},
+								},
+							},
+							"interfaces":    interface{}(nil),
+							"kind":          "INPUT_OBJECT",
+							"name":          "FilterInput",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description":   interface{}(nil),
+							"enumValues":    interface{}(nil),
+							"fields":        interface{}(nil),
+							"inputFields":   interface{}(nil),
+							"interfaces":    interface{}(nil),
+							"kind":          "SCALAR",
+							"name":          "Float",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description":   interface{}(nil),
+							"enumValues":    interface{}(nil),
+							"fields":        interface{}(nil),
+							"inputFields":   interface{}(nil),
+							"interfaces":    interface{}(nil),
+							"kind":          "SCALAR",
+							"name":          "ID",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description":   interface{}(nil),
+							"enumValues":    interface{}(nil),
+							"fields":        interface{}(nil),
+							"inputFields":   interface{}(nil),
+							"interfaces":    interface{}(nil),
+							"kind":          "SCALAR",
+							"name":          "Int",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description": interface{}(nil),
+							"enumValues":  interface{}(nil),
+							"fields": []interface{}{
+								map[string]interface{}{
+									"args":              []interface{}{},
+									"deprecationReason": interface{}(nil),
+									"description":       interface{}(nil),
+									"isDeprecated":      false,
+									"name":              "val",
+									"type": map[string]interface{}{
+										"kind":   "SCALAR",
+										"name":   "String",
+										"ofType": interface{}(nil),
+									},
+								},
+							},
+							"inputFields":   interface{}(nil),
+							"interfaces":    []interface{}{},
+							"kind":          "OBJECT",
+							"name":          "Node",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description": interface{}(nil),
+							"enumValues":  interface{}(nil),
+							"fields": []interface{}{
+								map[string]interface{}{
+									"args": []interface{}{
+										map[string]interface{}{
+											"defaultValue": interface{}(nil),
+											"description":  interface{}(nil),
+											"name":         "filter",
+											"type": map[string]interface{}{
+												"kind":   "INPUT_OBJECT",
+												"name":   "FilterInput",
+												"ofType": interface{}(nil),
+											},
+										},
+									},
+									"deprecationReason": interface{}(nil),
+									"description":       interface{}(nil),
+									"isDeprecated":      false,
+									"name":              "node",
+									"type": map[string]interface{}{
+										"kind":   "OBJECT",
+										"name":   "Node",
+										"ofType": interface{}(nil),
+									},
+								},
+							},
+							"inputFields":   interface{}(nil),
+							"interfaces":    []interface{}{},
+							"kind":          "OBJECT",
+							"name":          "QueryRoot",
+							"possibleTypes": interface{}(nil),
+						},
+						map[string]interface{}{
+							"description":   interface{}(nil),
+							"enumValues":    interface{}(nil),
+							"fields":        interface{}(nil),
+							"inputFields":   interface{}(nil),
+							"interfaces":    interface{}(nil),
+							"kind":          "SCALAR",
+							"name":          "String",
+							"possibleTypes": interface{}(nil),
+						},
+					},
+				},
+			},
+		})
 	})
 
 	Convey("Execute: Handles list nullability", t, func() {
