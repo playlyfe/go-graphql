@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"runtime/debug"
 	"strings"
+
 	//"log"
 
 	"sync"
@@ -1076,7 +1077,17 @@ func (executor *Executor) resolveGroupedFields(reqCtx *RequestContext, isParalle
 						wg.Done()
 					}
 				}()
-				key, value, err := executor.getFieldEntry(reqCtx, objectType, source, responseKey, fields)
+				var key string
+				var value interface{}
+				var err error
+				if src, ok := source.(func() (interface{}, error)); ok {
+					value, err = src()
+					if err == nil {
+						key, value, err = executor.getFieldEntry(reqCtx, objectType, value, responseKey, fields)
+					}
+				} else {
+					key, value, err = executor.getFieldEntry(reqCtx, objectType, source, responseKey, fields)
+				}
 				if err != nil {
 					errMutex.Lock()
 					errs = append(errs, err)
