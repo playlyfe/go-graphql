@@ -1317,7 +1317,7 @@ func (executor *Executor) completeValue(reqCtx *RequestContext, objectType *Obje
 		return nil, nil
 	default:
 		if _, ok := executor.Schema.Document.EnumTypeIndex[typeName]; ok {
-			val, ok := utils.CoerceEnum(result)
+			val, ok := utils.CoerceString(result)
 			if ok {
 				return val, nil
 			}

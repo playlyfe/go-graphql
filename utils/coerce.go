@@ -174,55 +174,54 @@ func CoerceString(value interface{}) (string, bool) {
 	switch result := value.(type) {
 	case int:
 		return strconv.FormatInt(int64(result), 10), true
+	case *int:
+		return strconv.FormatInt(int64(*result), 10), true
 	case int32:
 		return strconv.FormatInt(int64(result), 10), true
+	case *int32:
+		return strconv.FormatInt(int64(*result), 10), true
 	case int64:
 		return strconv.FormatInt(result, 10), true
+	case *int64:
+		return strconv.FormatInt(*result, 10), true
 	case uint:
 		return strconv.FormatInt(int64(result), 10), true
+	case *uint:
+		return strconv.FormatInt(int64(*result), 10), true
 	case uint8:
 		return strconv.FormatInt(int64(result), 10), true
+	case *uint8:
+		return strconv.FormatInt(int64(*result), 10), true
 	case uint16:
 		return strconv.FormatInt(int64(result), 10), true
+	case *uint16:
+		return strconv.FormatInt(int64(*result), 10), true
 	case uint32:
 		return strconv.FormatInt(int64(result), 10), true
+	case *uint32:
+		return strconv.FormatInt(int64(*result), 10), true
 	case uint64:
 		return strconv.FormatInt(int64(result), 10), true
+	case *uint64:
+		return strconv.FormatInt(int64(*result), 10), true
 	case float32:
 		return strconv.FormatFloat(float64(result), 'f', -1, 64), true
+	case *float32:
+		return strconv.FormatFloat(float64(*result), 'f', -1, 64), true
 	case float64:
 		return strconv.FormatFloat(result, 'f', -1, 64), true
+	case *float64:
+		return strconv.FormatFloat(*result, 'f', -1, 64), true
 	case bool:
 		return strconv.FormatBool(result), true
+	case *bool:
+		return strconv.FormatBool(*result), true
 	case string:
 		return result, true
+	case *string:
+		return *result, true
 	case fmt.Stringer:
 		return result.String(), true
-	default:
-		v := reflect.ValueOf(value)
-		if v.Kind() == reflect.String {
-			return v.String(), true
-		}
-		return "", false
-	}
-}
-
-func CoerceEnum(value interface{}) (string, bool) {
-	switch result := value.(type) {
-	case int:
-		return strconv.FormatInt(int64(result), 32), true
-	case int32:
-		return strconv.FormatInt(int64(result), 32), true
-	case int64:
-		return strconv.FormatInt(result, 32), true
-	case float32:
-		return strconv.FormatFloat(float64(result), 'f', -1, 32), true
-	case float64:
-		return strconv.FormatFloat(result, 'f', -1, 32), true
-	case bool:
-		return strconv.FormatBool(result), true
-	case string:
-		return result, true
 	default:
 		v := reflect.ValueOf(value)
 		if v.Kind() == reflect.String {
