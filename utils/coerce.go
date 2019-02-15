@@ -6,28 +6,28 @@ import (
 	"strconv"
 )
 
-func CoerceFloat(value interface{}) (float32, bool) {
+func CoerceFloat(value interface{}) (float64, bool) {
 	switch result := value.(type) {
 	case int:
-		return float32(result), true
+		return float64(result), true
 	case int32:
-		return float32(result), true
+		return float64(result), true
 	case int64:
-		return float32(result), true
+		return float64(result), true
 	case uint:
-		return float32(result), true
+		return float64(result), true
 	case uint8:
-		return float32(result), true
+		return float64(result), true
 	case uint16:
-		return float32(result), true
+		return float64(result), true
 	case uint32:
-		return float32(result), true
+		return float64(result), true
 	case uint64:
-		return float32(result), true
+		return float64(result), true
 	case float32:
-		return result, true
+		return float64(result), true
 	case float64:
-		return float32(result), true
+		return result, true
 	case bool:
 		if result == true {
 			return 1.0, true
@@ -38,15 +38,15 @@ func CoerceFloat(value interface{}) (float32, bool) {
 		if err != nil {
 			return 0.0, false
 		}
-		return float32(val), true
+		return val, true
 	default:
 		v := reflect.ValueOf(value)
 		kind := v.Kind()
 		switch kind {
 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			return float32(v.Int()), true
+			return float64(v.Int()), true
 		case reflect.Float32, reflect.Float64:
-			return float32(v.Float()), true
+			return v.Float(), true
 		}
 		return 0.0, false
 	}
