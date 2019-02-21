@@ -10,31 +10,62 @@ func CoerceFloat(value interface{}) (float64, bool) {
 	switch result := value.(type) {
 	case int:
 		return float64(result), true
+	case *int:
+		return float64(*result), true
 	case int32:
 		return float64(result), true
+	case *int32:
+		return float64(*result), true
 	case int64:
 		return float64(result), true
+	case *int64:
+		return float64(*result), true
 	case uint:
 		return float64(result), true
+	case *uint:
+		return float64(*result), true
 	case uint8:
 		return float64(result), true
+	case *uint8:
+		return float64(*result), true
 	case uint16:
 		return float64(result), true
+	case *uint16:
+		return float64(*result), true
 	case uint32:
 		return float64(result), true
+	case *uint32:
+		return float64(*result), true
 	case uint64:
 		return float64(result), true
+	case *uint64:
+		return float64(*result), true
 	case float32:
 		return float64(result), true
+	case *float32:
+		return float64(*result), true
 	case float64:
 		return result, true
+	case *float64:
+		return *result, true
 	case bool:
 		if result == true {
 			return 1.0, true
 		}
 		return 0.0, true
+	case *bool:
+		if *result == true {
+			return 1.0, true
+		}
+		return 0.0, true
 	case string:
 		val, err := strconv.ParseFloat(result, 64)
+		if err != nil {
+			return 0.0, false
+		}
+		return val, true
+	case *string:
+		val, err := strconv.ParseFloat(*result, 64)
 		if err != nil {
 			return 0.0, false
 		}
@@ -56,31 +87,62 @@ func CoerceInt(value interface{}) (int32, bool) {
 	switch result := value.(type) {
 	case int:
 		return int32(result), true
+	case *int:
+		return int32(*result), true
 	case int32:
 		return result, true
+	case *int32:
+		return *result, true
 	case int64:
 		return int32(result), true
+	case *int64:
+		return int32(*result), true
 	case uint:
 		return int32(result), true
+	case *uint:
+		return int32(*result), true
 	case uint8:
 		return int32(result), true
+	case *uint8:
+		return int32(*result), true
 	case uint16:
 		return int32(result), true
+	case *uint16:
+		return int32(*result), true
 	case uint32:
 		return int32(result), true
+	case *uint32:
+		return int32(*result), true
 	case uint64:
 		return int32(result), true
+	case *uint64:
+		return int32(*result), true
 	case float32:
 		return int32(result), true
+	case *float32:
+		return int32(*result), true
 	case float64:
 		return int32(result), true
+	case *float64:
+		return int32(*result), true
 	case bool:
 		if result == true {
 			return 1, true
 		}
 		return 0, true
+	case *bool:
+		if *result == true {
+			return 1, true
+		}
+		return 0, true
 	case string:
 		val, err := strconv.ParseInt(result, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return int32(val), true
+	case *string:
+		val, err := strconv.ParseInt(*result, 10, 64)
 		if err != nil {
 			return 0, false
 		}
@@ -105,8 +167,18 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 		return false, true
+	case *int:
+		if *result != 0 {
+			return true, true
+		}
+		return false, true
 	case int32:
 		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case *int32:
+		if *result != 0 {
 			return true, true
 		}
 		return false, true
@@ -115,8 +187,18 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 		return false, true
+	case *int64:
+		if *result != 0 {
+			return true, true
+		}
+		return false, true
 	case float32:
 		if result != 0.0 {
+			return true, true
+		}
+		return false, true
+	case *float32:
+		if *result != 0.0 {
 			return true, true
 		}
 		return false, true
@@ -125,8 +207,18 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 		return false, true
+	case *float64:
+		if *result != 0.0 {
+			return true, true
+		}
+		return false, true
 	case uint:
 		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case *uint:
+		if *result != 0 {
 			return true, true
 		}
 		return false, true
@@ -135,8 +227,18 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 		return false, true
+	case *uint8:
+		if *result != 0 {
+			return true, true
+		}
+		return false, true
 	case uint16:
 		if result != 0 {
+			return true, true
+		}
+		return false, true
+	case *uint16:
+		if *result != 0 {
 			return true, true
 		}
 		return false, true
@@ -145,19 +247,40 @@ func CoerceBoolean(value interface{}) (bool, bool) {
 			return true, true
 		}
 		return false, true
+	case *uint32:
+		if *result != 0 {
+			return true, true
+		}
+		return false, true
 	case uint64:
 		if result != 0 {
 			return true, true
 		}
 		return false, true
+	case *uint64:
+		if *result != 0 {
+			return true, true
+		}
+		return false, true
 	case bool:
 		return result, true
+	case *bool:
+		return *result, true
 	case string:
 		if result == "false" {
 			return false, true
 		} else if result == "true" {
 			return true, true
 		} else if result == "" {
+			return false, true
+		}
+		return true, true
+	case *string:
+		if *result == "false" {
+			return false, true
+		} else if *result == "true" {
+			return true, true
+		} else if *result == "" {
 			return false, true
 		}
 		return true, true
